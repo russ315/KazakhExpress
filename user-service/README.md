@@ -12,7 +12,7 @@
 - `internal/user/repository.go` - репозиторий с PostgreSQL для хранения данных пользователей.
 - `internal/user/service.go` - бизнес-логика аутентификации и управления профилями.
 - `internal/http/handler.go` - HTTP API для работы с пользователями.
-- `internal/email/service.go` - сервис для отправки email уведомлений.
+- `internal/email/service.go` - SMTP сервис для отправки email уведомлений.
 
 ## Запуск
 

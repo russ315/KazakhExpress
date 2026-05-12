@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"kazakhexpress/user-service/internal/email"
 	httpapi "kazakhexpress/user-service/internal/http"
 	"kazakhexpress/user-service/internal/user"
 )
@@ -31,7 +32,8 @@ func main() {
 	}
 	defer repo.Close()
 
-	service := user.NewService(repo, jwtSecret, nil)
+	smtpEmailService := email.NewSMTPEmailService()
+	service := user.NewService(repo, jwtSecret, smtpEmailService)
 	handler := httpapi.NewHandler(service)
 
 	log.Printf("user service started on :%s", port)
