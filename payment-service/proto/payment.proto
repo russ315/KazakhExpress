@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package kazakhexpress.payment.v1;
+
+option go_package = "kazakhexpress/payment-service/proto/paymentv1";
+
+service PaymentService {
+  rpc CreatePayment(CreatePaymentRequest) returns (PaymentResponse);
+  rpc GetPayment(GetPaymentRequest) returns (PaymentResponse);
+  rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse);
+  rpc RefundPayment(RefundPaymentRequest) returns (PaymentResponse);
+}
+
+message CreatePaymentRequest {
+  string order_id = 1;
+  string customer_id = 2;
+  string customer_email = 3;
+  int64 amount_kzt = 4;
+  PaymentMethod method = 5;
+}
+
+message GetPaymentRequest {
+  string payment_id = 1;
+}
+
+message ListPaymentsRequest {
+  string customer_id = 1;
+}
+
+message RefundPaymentRequest {
+  string payment_id = 1;
+  string reason = 2;
+}
+
+message PaymentResponse {
+  string id = 1;
+  string order_id = 2;
+  string customer_id = 3;
+  string customer_email = 4;
+  int64 amount_kzt = 5;
+  PaymentMethod method = 6;
+  PaymentStatus status = 7;
+  string refund_reason = 8;
+  string created_at = 9;
+  string updated_at = 10;
+}
+
+message ListPaymentsResponse {
+  repeated PaymentResponse payments = 1;
+}
+
+enum PaymentMethod {
+  PAYMENT_METHOD_UNSPECIFIED = 0;
+  PAYMENT_METHOD_CARD = 1;
+  PAYMENT_METHOD_KASPI = 2;
+  PAYMENT_METHOD_WALLET = 3;
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_PAID = 1;
+  PAYMENT_STATUS_REFUNDED = 2;
+  PAYMENT_STATUS_FAILED = 3;
+}
