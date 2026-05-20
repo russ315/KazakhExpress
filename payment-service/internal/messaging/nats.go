@@ -19,11 +19,23 @@ func NewNATSPublisher(conn *nats.Conn) *NATSPublisher {
 }
 
 func (p *NATSPublisher) PublishPaymentCreated(ctx context.Context, event payment.PaymentEvent) error {
-	return p.publish(ctx, "payments.created", event)
+	return p.publish(ctx, "payment.created", event)
+}
+
+func (p *NATSPublisher) PublishPaymentSucceeded(ctx context.Context, event payment.PaymentEvent) error {
+	return p.publish(ctx, "payment.succeeded", event)
+}
+
+func (p *NATSPublisher) PublishPaymentFailed(ctx context.Context, event payment.PaymentEvent) error {
+	return p.publish(ctx, "payment.failed", event)
 }
 
 func (p *NATSPublisher) PublishPaymentRefunded(ctx context.Context, event payment.PaymentEvent) error {
-	return p.publish(ctx, "payments.refunded", event)
+	return p.publish(ctx, "payment.refunded", event)
+}
+
+func (p *NATSPublisher) PublishPaymentCancelled(ctx context.Context, event payment.PaymentEvent) error {
+	return p.publish(ctx, "payment.cancelled", event)
 }
 
 func (p *NATSPublisher) publish(ctx context.Context, subject string, event payment.PaymentEvent) error {

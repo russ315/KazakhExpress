@@ -1,12 +1,12 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
-	"strings"
+	nethttp "net/http"
 
 	"kazakhexpress/payment-service/internal/payment"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
@@ -17,118 +17,192 @@ func NewHandler(service *payment.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", h.health)
-	mux.HandleFunc("/payments", h.payments)
-	mux.HandleFunc("/payments/", h.paymentByID)
-	return mux
+func (h *Handler) Routes() nethttp.Handler {
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery())
+
+	router.GET("/health", h.health)
+	router.GET("/metrics", h.metrics)
+
+	paymentGroup := router.Group("/payment")
+	h.registerPaymentRoutes(paymentGroup)
+
+	return router
 }
 
-func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "payment"})
+func (h *Handler) registerPaymentRoutes(group *gin.RouterGroup) {
+	group.POST("", h.createPayment)
+	group.GET("", h.listPayments)
+	group.GET("/order/:orderID", h.getPaymentByOrderID)
+	group.POST("/webhook/mock", h.mockWebhook)
+	group.GET("/:id", h.getPayment)
+	group.POST("/:id/refund", h.refundPayment)
+	group.POST("/:id/confirm", h.confirmPayment)
+	group.POST("/:id/cancel", h.cancelPayment)
 }
 
-func (h *Handler) payments(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createPayment(w, r)
-	case http.MethodGet:
-		h.listPayments(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+func (h *Handler) health(c *gin.Context) {
+	c.JSON(nethttp.StatusOK, gin.H{"status": "ok", "service": "payment"})
 }
 
-func (h *Handler) paymentByID(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/payments/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusNotFound, "payment not found")
-		return
-	}
-
-	id := parts[0]
-	if len(parts) == 1 && r.Method == http.MethodGet {
-		h.getPayment(w, r, id)
-		return
-	}
-
-	if len(parts) == 2 && parts[1] == "refund" && r.Method == http.MethodPost {
-		h.refundPayment(w, r, id)
-		return
-	}
-
-	w.WriteHeader(http.StatusMethodNotAllowed)
+func (h *Handler) metrics(c *gin.Context) {
+	c.Header("Content-Type", "text/plain; version=0.0.4")
+	c.String(nethttp.StatusOK, "# HELP payment_service_up Payment service process health.\n# TYPE payment_service_up gauge\npayment_service_up 1\n")
 }
 
-func (h *Handler) createPayment(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createPayment(c *gin.Context) {
 	var input payment.CreateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, nethttp.StatusBadRequest, "invalid json")
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), input)
+	created, err := h.service.Create(c.Request.Context(), input)
 	if err != nil {
-		handleServiceError(w, err)
+		handleServiceError(c, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, created)
+	c.JSON(nethttp.StatusCreated, created)
 }
 
-func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
-	payments, err := h.service.List(r.Context())
-	if err != nil {
-		handleServiceError(w, err)
+func (h *Handler) listPayments(c *gin.Context) {
+	customerID := c.Query("customer_id")
+	if customerID != "" {
+		payments, err := h.service.ListByCustomerID(c.Request.Context(), customerID)
+		if err != nil {
+			handleServiceError(c, err)
+			return
+		}
+		c.JSON(nethttp.StatusOK, payments)
 		return
 	}
-	writeJSON(w, http.StatusOK, payments)
-}
 
-func (h *Handler) getPayment(w http.ResponseWriter, r *http.Request, id string) {
-	found, err := h.service.GetByID(r.Context(), id)
+	payments, err := h.service.List(c.Request.Context())
 	if err != nil {
-		handleServiceError(w, err)
+		handleServiceError(c, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, found)
+	c.JSON(nethttp.StatusOK, payments)
 }
 
-func (h *Handler) refundPayment(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) getPaymentByOrderID(c *gin.Context) {
+	found, err := h.service.GetByOrderID(c.Request.Context(), c.Param("orderID"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, found)
+}
+
+func (h *Handler) getPayment(c *gin.Context) {
+	found, err := h.service.GetByID(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, found)
+}
+
+func (h *Handler) refundPayment(c *gin.Context) {
 	var input payment.RefundInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, nethttp.StatusBadRequest, "invalid json")
 		return
 	}
-	input.PaymentID = id
+	input.PaymentID = c.Param("id")
 
-	refunded, err := h.service.Refund(r.Context(), input)
+	refunded, err := h.service.Refund(c.Request.Context(), input)
 	if err != nil {
-		handleServiceError(w, err)
+		handleServiceError(c, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, refunded)
+	c.JSON(nethttp.StatusOK, refunded)
 }
 
-func handleServiceError(w http.ResponseWriter, err error) {
+func (h *Handler) confirmPayment(c *gin.Context) {
+	var input payment.ConfirmInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, nethttp.StatusBadRequest, "invalid json")
+		return
+	}
+	input.PaymentID = c.Param("id")
+
+	confirmed, err := h.service.Confirm(c.Request.Context(), input)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, confirmed)
+}
+
+func (h *Handler) cancelPayment(c *gin.Context) {
+	var input payment.CancelInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, nethttp.StatusBadRequest, "invalid json")
+		return
+	}
+	input.PaymentID = c.Param("id")
+
+	cancelled, err := h.service.Cancel(c.Request.Context(), input)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, cancelled)
+}
+
+func (h *Handler) mockWebhook(c *gin.Context) {
+	var input struct {
+		PaymentID             string `json:"payment_id"`
+		Status                string `json:"status"`
+		ProviderTransactionID string `json:"provider_transaction_id"`
+		Reason                string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, nethttp.StatusBadRequest, "invalid json")
+		return
+	}
+
+	switch payment.Status(input.Status) {
+	case payment.StatusSucceeded:
+		confirmed, err := h.service.Confirm(c.Request.Context(), payment.ConfirmInput{
+			PaymentID:             input.PaymentID,
+			ProviderTransactionID: input.ProviderTransactionID,
+		})
+		if err != nil {
+			handleServiceError(c, err)
+			return
+		}
+		c.JSON(nethttp.StatusOK, confirmed)
+	case payment.StatusCancelled, payment.StatusFailed:
+		cancelled, err := h.service.Cancel(c.Request.Context(), payment.CancelInput{
+			PaymentID: input.PaymentID,
+			Reason:    input.Reason,
+		})
+		if err != nil {
+			handleServiceError(c, err)
+			return
+		}
+		c.JSON(nethttp.StatusOK, cancelled)
+	default:
+		writeError(c, nethttp.StatusBadRequest, "unsupported webhook status")
+	}
+}
+
+func handleServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, payment.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(c, nethttp.StatusBadRequest, err.Error())
 	case errors.Is(err, payment.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(c, nethttp.StatusNotFound, err.Error())
+	case errors.Is(err, payment.ErrInvalidState):
+		writeError(c, nethttp.StatusConflict, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeError(c, nethttp.StatusInternalServerError, "internal server error")
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func writeError(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{"error": message})
 }

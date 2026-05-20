@@ -1,22 +1,35 @@
-create table if not exists payments (
-	id text primary key,
-	order_id text not null,
-	customer_id text not null,
-	customer_email text not null,
-	amount_kzt bigint not null check (amount_kzt > 0),
-	method text not null check (method in ('card', 'kaspi', 'wallet')),
-	status text not null check (status in ('pending', 'succeeded', 'failed', 'refunded', 'cancelled')),
-	provider_transaction_id text not null default '',
-	idempotency_key text not null unique,
-	refund_reason text not null default '',
-	failure_reason text not null default '',
-	created_at timestamptz not null,
-	updated_at timestamptz not null
-);
+alter table payments
+	add column if not exists provider_transaction_id text not null default '',
+	add column if not exists idempotency_key text,
+	add column if not exists failure_reason text not null default '';
 
-create index if not exists idx_payments_order_id on payments(order_id);
-create index if not exists idx_payments_customer_id on payments(customer_id);
-create index if not exists idx_payments_status on payments(status);
+update payments
+set idempotency_key = id
+where idempotency_key is null or idempotency_key = '';
+
+alter table payments
+	alter column idempotency_key set not null;
+
+create unique index if not exists idx_payments_idempotency_key on payments(idempotency_key);
+
+do $$
+begin
+	if exists (
+		select 1
+		from pg_constraint
+		where conrelid = 'payments'::regclass
+		  and conname = 'payments_status_check'
+	) then
+		alter table payments drop constraint payments_status_check;
+	end if;
+end $$;
+
+update payments
+set status = 'succeeded'
+where status = 'paid';
+
+alter table payments
+	add constraint payments_status_check check (status in ('pending', 'succeeded', 'failed', 'refunded', 'cancelled'));
 
 create table if not exists payment_events (
 	id bigserial primary key,
