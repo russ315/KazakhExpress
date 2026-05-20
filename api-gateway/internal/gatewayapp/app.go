@@ -1,0 +1,38 @@
+package gatewayapp
+
+import (
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"kazakhexpress/api-gateway/internal/gateway"
+	"kazakhexpress/api-gateway/internal/paymentservice"
+)
+
+func Run() error {
+	port := getEnv("API_GATEWAY_PORT", "8080")
+	router := gateway.NewRouter()
+
+	paymentClient, err := paymentservice.NewGRPCClient(getEnv("PAYMENT_GRPC_ADDR", "localhost:9093"))
+	if err != nil {
+		return err
+	}
+	defer paymentClient.Close()
+	paymentservice.RegisterRoutes(router, paymentClient)
+
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Printf("api gateway started on :%s", port)
+	return server.ListenAndServe()
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}

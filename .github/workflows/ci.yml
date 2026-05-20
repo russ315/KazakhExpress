@@ -1,0 +1,55 @@
+name: service-ci
+
+on:
+  push:
+    branches: [main, feat-payment_service, "codex/**"]
+  pull_request:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - payment-service
+          - smtp-service
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: KazakhExpress
+
+      - uses: actions/checkout@v4
+        with:
+          repository: maqsatto/kazakhexpress-proto
+          path: kazakhexpress-proto
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Test
+        working-directory: KazakhExpress/${{ matrix.service }}
+        run: go test ./...
+
+      - name: Vet
+        working-directory: KazakhExpress/${{ matrix.service }}
+        run: go vet ./...
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: go-test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: KazakhExpress
+
+      - uses: actions/checkout@v4
+        with:
+          repository: maqsatto/kazakhexpress-proto
+          path: kazakhexpress-proto
+
+      - name: Build service images
+        working-directory: KazakhExpress
+        run: docker compose build api-gateway payment-service smtp-service
