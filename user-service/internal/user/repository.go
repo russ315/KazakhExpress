@@ -15,6 +15,16 @@ type Repository interface {
 	GetByEmail(email string) (*User, error)
 	Update(user *User) error
 	Delete(id string) error
+	SaveRefreshToken(token *RefreshToken) error
+	GetRefreshToken(tokenHash string) (*RefreshToken, error)
+	DeleteRefreshToken(tokenHash string) error
+	DeleteUserRefreshTokens(userID string) error
+	AddToBlacklist(jti string, expiresAt time.Time) error
+	IsBlacklisted(jti string) (bool, error)
+	SavePasswordResetToken(userID string, tokenHash string, expiresAt time.Time) error
+	GetUserByResetToken(tokenHash string) (*User, error)
+	UpdatePassword(userID string, passwordHash string) error
+	ClearPasswordResetToken(userID string) error
 }
 
 type PostgresRepository struct {
@@ -40,24 +50,48 @@ func NewPostgresRepository(dbURL string) (*PostgresRepository, error) {
 }
 
 func (r *PostgresRepository) createTables() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id VARCHAR(36) PRIMARY KEY,
-		email VARCHAR(255) UNIQUE NOT NULL,
-		password_hash VARCHAR(255) NOT NULL,
-		first_name VARCHAR(100) NOT NULL,
-		last_name VARCHAR(100) NOT NULL,
-		phone VARCHAR(20),
-		address TEXT,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-		updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-	);
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id VARCHAR(36) PRIMARY KEY,
+			email VARCHAR(255) UNIQUE NOT NULL,
+			password_hash VARCHAR(255) NOT NULL,
+			first_name VARCHAR(100) NOT NULL,
+			last_name VARCHAR(100) NOT NULL,
+			phone VARCHAR(20),
+			address TEXT,
+			reset_token_hash VARCHAR(255),
+			reset_token_expires_at TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
 
-	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-	`
+		`CREATE TABLE IF NOT EXISTS refresh_tokens (
+			id SERIAL PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			token_hash VARCHAR(255) NOT NULL UNIQUE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash)`,
 
-	_, err := r.db.Exec(query)
-	return err
+		`CREATE TABLE IF NOT EXISTS token_blacklist (
+			id SERIAL PRIMARY KEY,
+			jti VARCHAR(255) NOT NULL UNIQUE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_token_blacklist_jti ON token_blacklist(jti)`,
+		`CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at ON token_blacklist(expires_at)`,
+	}
+
+	for _, q := range queries {
+		if _, err := r.db.Exec(q); err != nil {
+			return fmt.Errorf("failed to execute: %s: %w", q[:60], err)
+		}
+	}
+	return nil
 }
 
 func (r *PostgresRepository) Create(user *User) error {
@@ -164,6 +198,146 @@ func (r *PostgresRepository) Delete(id string) error {
 	}
 
 	return nil
+}
+
+func (r *PostgresRepository) SaveRefreshToken(token *RefreshToken) error {
+	query := `
+	INSERT INTO refresh_tokens (user_id, token_hash, expires_at, created_at)
+	VALUES ($1, $2, $3, $4)
+	`
+
+	token.CreatedAt = time.Now()
+
+	_, err := r.db.Exec(query, token.UserID, token.TokenHash, token.ExpiresAt, token.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save refresh token: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresRepository) GetRefreshToken(tokenHash string) (*RefreshToken, error) {
+	query := `
+	SELECT id, user_id, token_hash, expires_at, created_at
+	FROM refresh_tokens
+	WHERE token_hash = $1
+	`
+
+	token := &RefreshToken{}
+	err := r.db.QueryRow(query, tokenHash).Scan(
+		&token.ID,
+		&token.UserID,
+		&token.TokenHash,
+		&token.ExpiresAt,
+		&token.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("refresh token not found")
+		}
+		return nil, fmt.Errorf("failed to get refresh token: %w", err)
+	}
+
+	return token, nil
+}
+
+func (r *PostgresRepository) DeleteRefreshToken(tokenHash string) error {
+	query := `DELETE FROM refresh_tokens WHERE token_hash = $1`
+	_, err := r.db.Exec(query, tokenHash)
+	return err
+}
+
+func (r *PostgresRepository) DeleteUserRefreshTokens(userID string) error {
+	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
+	_, err := r.db.Exec(query, userID)
+	return err
+}
+
+func (r *PostgresRepository) AddToBlacklist(jti string, expiresAt time.Time) error {
+	query := `
+	INSERT INTO token_blacklist (jti, expires_at, created_at)
+	VALUES ($1, $2, $3)
+	ON CONFLICT (jti) DO NOTHING
+	`
+
+	_, err := r.db.Exec(query, jti, expiresAt, time.Now())
+	return err
+}
+
+func (r *PostgresRepository) IsBlacklisted(jti string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM token_blacklist WHERE jti = $1)`
+
+	var exists bool
+	err := r.db.QueryRow(query, jti).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+
+	return exists, nil
+}
+
+func (r *PostgresRepository) SavePasswordResetToken(userID string, tokenHash string, expiresAt time.Time) error {
+	query := `
+	UPDATE users
+	SET reset_token_hash = $2, reset_token_expires_at = $3, updated_at = NOW()
+	WHERE id = $1
+	`
+
+	_, err := r.db.Exec(query, userID, tokenHash, expiresAt)
+	return err
+}
+
+func (r *PostgresRepository) GetUserByResetToken(tokenHash string) (*User, error) {
+	query := `
+	SELECT id, email, password_hash, first_name, last_name, phone, address, created_at, updated_at
+	FROM users
+	WHERE reset_token_hash = $1 AND reset_token_expires_at > NOW()
+	`
+
+	user := &User{}
+	err := r.db.QueryRow(query, tokenHash).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Password,
+		&user.FirstName,
+		&user.LastName,
+		&user.Phone,
+		&user.Address,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("invalid or expired reset token")
+		}
+		return nil, fmt.Errorf("failed to get user by reset token: %w", err)
+	}
+
+	return user, nil
+}
+
+func (r *PostgresRepository) UpdatePassword(userID string, passwordHash string) error {
+	query := `
+	UPDATE users
+	SET password_hash = $2, updated_at = NOW()
+	WHERE id = $1
+	`
+
+	_, err := r.db.Exec(query, userID, passwordHash)
+	return err
+}
+
+func (r *PostgresRepository) ClearPasswordResetToken(userID string) error {
+	query := `
+	UPDATE users
+	SET reset_token_hash = NULL, reset_token_expires_at = NULL, updated_at = NOW()
+	WHERE id = $1
+	`
+
+	_, err := r.db.Exec(query, userID)
+	return err
 }
 
 func (r *PostgresRepository) Close() error {
