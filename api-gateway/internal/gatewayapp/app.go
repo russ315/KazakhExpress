@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"kazakhexpress/api-gateway/internal/gateway"
+	"kazakhexpress/api-gateway/internal/orderservice"
 	"kazakhexpress/api-gateway/internal/paymentservice"
 )
 
@@ -20,6 +21,13 @@ func Run() error {
 	}
 	defer paymentClient.Close()
 	paymentservice.RegisterRoutes(router, paymentClient)
+
+	orderClient, err := orderservice.NewGRPCClient(getEnv("ORDER_GRPC_ADDR", "localhost:9092"))
+	if err != nil {
+		return err
+	}
+	defer orderClient.Close()
+	orderservice.RegisterRoutes(router, orderClient)
 
 	server := &http.Server{
 		Addr:              ":" + port,

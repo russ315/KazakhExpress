@@ -2,11 +2,12 @@ package order
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,7 +17,7 @@ type Repository interface {
 	Create(ctx context.Context, order Order) (Order, error)
 	List(ctx context.Context) ([]Order, error)
 	GetByID(ctx context.Context, id string) (Order, error)
-	Update(ctx context.Context, order Order) (Order, error)
+	UpdateStatus(ctx context.Context, id string, from Status, to Status, reason string) (Order, error)
 }
 
 type PostgresRepository struct {
@@ -28,30 +29,44 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, order Order) (Order, error) {
-	itemsJSON, err := json.Marshal(order.Items)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return Order{}, fmt.Errorf("marshal order items: %w", err)
+		return Order{}, fmt.Errorf("begin create order: %w", err)
 	}
+	defer tx.Rollback(ctx)
 
-	const query = `
-		insert into orders (
-			id, customer_id, items, status, total_kzt, created_at, updated_at
-		) values ($1, $2, $3, $4, $5, $6, $7)`
-
-	_, err = r.db.Exec(ctx, query, order.ID, order.CustomerID, itemsJSON, order.Status, order.TotalKZT, order.CreatedAt, order.UpdatedAt)
+	_, err = tx.Exec(ctx, `
+		insert into orders (id, customer_id, status, total_kzt, created_at, updated_at)
+		values ($1, $2, $3, $4, $5, $6)`,
+		order.ID, order.CustomerID, order.Status, order.TotalKZT, order.CreatedAt, order.UpdatedAt)
 	if err != nil {
 		return Order{}, fmt.Errorf("create order: %w", err)
+	}
+
+	for _, item := range order.Items {
+		_, err = tx.Exec(ctx, `
+			insert into order_items (order_id, product_id, name, quantity, price_kzt)
+			values ($1, $2, $3, $4, $5)`,
+			order.ID, item.ProductID, item.Name, item.Quantity, item.PriceKZT)
+		if err != nil {
+			return Order{}, fmt.Errorf("create order item: %w", err)
+		}
+	}
+
+	if err := insertStatusHistory(ctx, tx, order.ID, "", order.Status, "order created", order.CreatedAt); err != nil {
+		return Order{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Order{}, fmt.Errorf("commit create order: %w", err)
 	}
 	return order, nil
 }
 
 func (r *PostgresRepository) List(ctx context.Context) ([]Order, error) {
-	const query = `
-		select id, customer_id, items, status, total_kzt, created_at, updated_at
+	rows, err := r.db.Query(ctx, `
+		select id, customer_id, status, total_kzt, created_at, updated_at
 		from orders
-		order by created_at desc`
-
-	rows, err := r.db.Query(ctx, query)
+		order by created_at desc`)
 	if err != nil {
 		return nil, fmt.Errorf("list orders: %w", err)
 	}
@@ -63,56 +78,106 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Order, error) {
 		if err != nil {
 			return nil, fmt.Errorf("scan order: %w", err)
 		}
+		order.Items, err = r.listItems(ctx, order.ID)
+		if err != nil {
+			return nil, err
+		}
 		orders = append(orders, order)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate orders: %w", err)
 	}
-
 	return orders, nil
 }
 
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Order, error) {
-	const query = `
-		select id, customer_id, items, status, total_kzt, created_at, updated_at
+	order, err := scanOrder(r.db.QueryRow(ctx, `
+		select id, customer_id, status, total_kzt, created_at, updated_at
 		from orders
-		where id = $1`
-
-	order, err := scanOrder(r.db.QueryRow(ctx, query, id))
+		where id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Order{}, ErrNotFound
 	}
 	if err != nil {
 		return Order{}, fmt.Errorf("get order: %w", err)
 	}
-
+	order.Items, err = r.listItems(ctx, order.ID)
+	if err != nil {
+		return Order{}, err
+	}
 	return order, nil
 }
 
-func (r *PostgresRepository) Update(ctx context.Context, order Order) (Order, error) {
-	itemsJSON, err := json.Marshal(order.Items)
+func (r *PostgresRepository) UpdateStatus(ctx context.Context, id string, from Status, to Status, reason string) (Order, error) {
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return Order{}, fmt.Errorf("marshal order items: %w", err)
+		return Order{}, fmt.Errorf("begin update order status: %w", err)
 	}
+	defer tx.Rollback(ctx)
 
-	const query = `
+	updated, err := scanOrder(tx.QueryRow(ctx, `
 		update orders
-		set customer_id = $2,
-			items = $3,
-			status = $4,
-			total_kzt = $5,
-			updated_at = $6
-		where id = $1`
-
-	tag, err := r.db.Exec(ctx, query, order.ID, order.CustomerID, itemsJSON, order.Status, order.TotalKZT, order.UpdatedAt)
-	if err != nil {
-		return Order{}, fmt.Errorf("update order: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
+		set status = $2,
+			updated_at = now()
+		where id = $1
+		returning id, customer_id, status, total_kzt, created_at, updated_at`, id, to))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Order{}, ErrNotFound
 	}
+	if err != nil {
+		return Order{}, fmt.Errorf("update order status: %w", err)
+	}
+	if err := insertStatusHistory(ctx, tx, id, from, to, reason, updated.UpdatedAt); err != nil {
+		return Order{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Order{}, fmt.Errorf("commit update order status: %w", err)
+	}
+	updated.Items, err = r.listItems(ctx, updated.ID)
+	if err != nil {
+		return Order{}, err
+	}
+	return updated, nil
+}
 
-	return order, nil
+func (r *PostgresRepository) listItems(ctx context.Context, orderID string) ([]Item, error) {
+	rows, err := r.db.Query(ctx, `
+		select product_id, name, quantity, price_kzt
+		from order_items
+		where order_id = $1
+		order by id`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("list order items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Item, 0)
+	for rows.Next() {
+		var item Item
+		if err := rows.Scan(&item.ProductID, &item.Name, &item.Quantity, &item.PriceKZT); err != nil {
+			return nil, fmt.Errorf("scan order item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order items: %w", err)
+	}
+	return items, nil
+}
+
+type statusHistoryExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func insertStatusHistory(ctx context.Context, tx statusHistoryExecutor, orderID string, from Status, to Status, reason string, createdAt time.Time) error {
+	_, err := tx.Exec(ctx, `
+		insert into order_status_history (order_id, from_status, to_status, reason, created_at)
+		values ($1, nullif($2, ''), $3, $4, $5)`,
+		orderID, from, to, reason, createdAt)
+	if err != nil {
+		return fmt.Errorf("insert order status history: %w", err)
+	}
+	return nil
 }
 
 type rowScanner interface {
@@ -121,15 +186,9 @@ type rowScanner interface {
 
 func scanOrder(row rowScanner) (Order, error) {
 	var order Order
-	var itemsJSON []byte
-
-	err := row.Scan(&order.ID, &order.CustomerID, &itemsJSON, &order.Status, &order.TotalKZT, &order.CreatedAt, &order.UpdatedAt)
+	err := row.Scan(&order.ID, &order.CustomerID, &order.Status, &order.TotalKZT, &order.CreatedAt, &order.UpdatedAt)
 	if err != nil {
 		return Order{}, err
 	}
-	if err := json.Unmarshal(itemsJSON, &order.Items); err != nil {
-		return Order{}, fmt.Errorf("unmarshal order items: %w", err)
-	}
-
 	return order, nil
 }
