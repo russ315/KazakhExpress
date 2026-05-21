@@ -24,9 +24,9 @@ func NewSMTPEmailService() *SMTPEmailService {
 	return &SMTPEmailService{
 		smtpHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
 		smtpPort:     getEnv("SMTP_PORT", "587"),
-		smtpUsername: getEnv("SMTP_USERNAME", ""),
-		smtpPassword: getEnv("SMTP_PASSWORD", ""),
 		fromEmail:    getEnv("FROM_EMAIL", "noreply@kazakhexpress.kz"),
+		smtpUsername: getEnv("SMTP_USERNAME", "ruslan74071@gmail.com"),
+		smtpPassword: getEnv("SMTP_PASSWORD", "gjpy ypye zcpx bvhu"),
 	}
 }
 

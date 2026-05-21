@@ -24,7 +24,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/health", h.handleHealth)
 	mux.HandleFunc("/auth/register", h.handleRegister)
 	mux.HandleFunc("/auth/login", h.handleLogin)
-	mux.HandleFunc("/users/profile", h.withAuth(h.handleProfile))
+	mux.HandleFunc("/users/me", h.withAuth(h.handleProfile))
+	mux.HandleFunc("/users/", h.handleGetUserByID)
 
 	return mux
 }
@@ -97,6 +98,33 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleGetProfile(w http.ResponseWriter, r *http.Request, userID string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	profile, err := h.service.GetProfile(userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(profile)
+}
+
+func (h *Handler) handleGetUserByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := strings.TrimPrefix(r.URL.Path, "/users/")
+	if userID == "" {
+		http.Error(w, "User ID is required", http.StatusBadRequest)
 		return
 	}
 
