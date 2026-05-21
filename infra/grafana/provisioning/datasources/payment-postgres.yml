@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: Payment PostgreSQL 17
+    type: postgres
+    access: proxy
+    url: payment-postgres:5432
+    user: postgres
+    secureJsonData:
+      password: postgres
+    jsonData:
+      database: kazakhexpress
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
