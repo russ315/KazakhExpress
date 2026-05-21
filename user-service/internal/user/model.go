@@ -29,8 +29,9 @@ type LoginInput struct {
 }
 
 type LoginResponse struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+	User         User   `json:"user"`
 }
 
 type UpdateProfileInput struct {
@@ -41,6 +42,28 @@ type UpdateProfileInput struct {
 }
 
 type AuthResponse struct {
-	User  User   `json:"user"`
-	Token string `json:"token"`
+	User         User   `json:"user"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type RefreshToken struct {
+	ID        int       `json:"id" db:"id"`
+	UserID    string    `json:"user_id" db:"user_id"`
+	TokenHash string    `json:"token_hash" db:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+type RefreshTokenInput struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+type ForgotPasswordInput struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+type ResetPasswordInput struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=6"`
 }
