@@ -5,11 +5,12 @@ import "time"
 type Status string
 
 const (
-	StatusCreated   Status = "created"
-	StatusPaid      Status = "paid"
-	StatusShipped   Status = "shipped"
-	StatusCompleted Status = "completed"
-	StatusCanceled  Status = "canceled"
+	StatusCreated       Status = "created"
+	StatusPaid          Status = "paid"
+	StatusPaymentFailed Status = "payment_failed"
+	StatusShipped       Status = "shipped"
+	StatusCompleted     Status = "completed"
+	StatusCanceled      Status = "canceled"
 )
 
 type Item struct {
@@ -36,4 +37,41 @@ type CreateInput struct {
 
 type UpdateStatusInput struct {
 	Status Status `json:"status"`
+}
+
+type CancelInput struct {
+	Reason string `json:"reason"`
+}
+
+type StatusHistory struct {
+	ID        int64     `json:"id"`
+	OrderID   string    `json:"order_id"`
+	From      Status    `json:"from_status,omitempty"`
+	To        Status    `json:"to_status"`
+	Reason    string    `json:"reason,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Event struct {
+	OrderID    string    `json:"order_id"`
+	CustomerID string    `json:"customer_id"`
+	Status     Status    `json:"status"`
+	TotalKZT   int64     `json:"total_kzt"`
+	Reason     string    `json:"reason,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type PaymentEvent struct {
+	PaymentID  string    `json:"payment_id"`
+	OrderID    string    `json:"order_id"`
+	CustomerID string    `json:"customer_id"`
+	Status     string    `json:"status"`
+	Reason     string    `json:"reason,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type StockReservedEvent struct {
+	OrderID    string    `json:"order_id"`
+	CustomerID string    `json:"customer_id"`
+	OccurredAt time.Time `json:"occurred_at"`
 }

@@ -59,6 +59,11 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+		h.cancelOrder(w, r, id)
+		return
+	}
+
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
@@ -112,6 +117,21 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request, id string
 	}
 
 	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) cancelOrder(w http.ResponseWriter, r *http.Request, id string) {
+	var input order.CancelInput
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&input)
+	}
+
+	cancelled, err := h.service.Cancel(r.Context(), id, input.Reason)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cancelled)
 }
 
 func handleServiceError(w http.ResponseWriter, err error) {
