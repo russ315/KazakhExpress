@@ -166,15 +166,28 @@ PostgreSQL and NATS integration tests:
 powershell -ExecutionPolicy Bypass -File scripts/integration.ps1
 ```
 
+Full unit + mock + integration test report (creates docs/test-execution-report.md):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run-all-tests.ps1
+```
+
 Teacher demo flow with step-by-step API load for Grafana:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/demo-showcase.ps1 -Interactive
 ```
 
+Sequential load generator (phase-by-phase spikes for Grafana):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo-load-generator.ps1
+```
+
 Useful dashboards while the demo script runs:
 
 ```txt
+KazakhExpress Ultimate Performance Dashboard
 KazakhExpress Backend Overview
 KazakhExpress Payment Flow
 KazakhExpress Catalog And Reviews
@@ -193,10 +206,20 @@ docs/backend-status.md
 Grafana is provisioned with Prometheus, Loki, Tempo, and ready dashboards:
 
 ```txt
+KazakhExpress Ultimate Performance Dashboard
 KazakhExpress Backend Overview
 KazakhExpress Payment Flow
 KazakhExpress Catalog And Reviews
 KazakhExpress Messaging And Infra
+```
+
+GitHub Actions workflows:
+
+```txt
+service-ci -> unit tests, vet, Docker build, compose validation, seed, smoke
+backend-integration -> Postgres + NATS integration tests
+test-report -> unit + integration report artifact
+proto-generation -> buf lint/generate + proto tests
 ```
 
 Current services expose `/metrics` where HTTP is enabled, and all service logs are structured enough for local debugging. Tracing pipeline is ready through the OTel Collector and Tempo.

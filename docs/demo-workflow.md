@@ -101,11 +101,34 @@ generate API load
 Watch these dashboards while each step runs:
 
 ```txt
+KazakhExpress Ultimate Performance Dashboard
 Backend Overview: request count, latency, errors
 Payment Flow: succeeded/refunded counters
 Catalog And Reviews: review/rating activity
 Messaging And Infra: NATS and infrastructure
 Loki logs: smtp-service dry-run or real email send
+```
+
+## 4b. Sequential Load Workflow (Phase-by-Phase)
+
+Use this when you want a clean, stepwise spike for each subsystem while narrating in Grafana:
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo-load-generator.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/demo-load-generator.sh
+```
+
+Each phase pauses for you to explain the effect, then triggers a focused spike:
+
+```txt
+user registrations -> catalog browsing -> orders -> payments (idempotency) -> reviews
 ```
 
 ## 5. Show Main Flow Manually
@@ -185,6 +208,7 @@ MinIO:        http://localhost:9001  minioadmin/minioadmin
 Grafana dashboards:
 
 ```txt
+KazakhExpress Ultimate Performance Dashboard
 KazakhExpress Backend Overview
 KazakhExpress Payment Flow
 KazakhExpress Catalog And Reviews
