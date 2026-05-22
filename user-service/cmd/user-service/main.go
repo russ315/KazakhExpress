@@ -13,7 +13,7 @@ import (
 	redisclient "kazakhexpress/user-service/internal/redis"
 	"kazakhexpress/user-service/internal/user"
 
-	userv1 "github.com/russ315/kazakhexpress-protos/kazakhexpress/user/v1"
+	userv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/user/v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"

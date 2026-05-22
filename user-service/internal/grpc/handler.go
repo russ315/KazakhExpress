@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/russ315/kazakhexpress-protos/kazakhexpress/user/v1"
+	pb "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/user/v1"
 	"kazakhexpress/user-service/internal/user"
 
 	"google.golang.org/grpc/codes"

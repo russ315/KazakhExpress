@@ -113,8 +113,8 @@ services:
 
   user-service:
     build:
-      context: .
-      dockerfile: user-service/Dockerfile
+      context: ..
+      dockerfile: KazakhExpress/user-service/Dockerfile
     container_name: kazakhexpress-user-service
     environment:
       USER_SERVICE_PORT: "8081"
