@@ -1,9 +1,11 @@
 package gatewayapp
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"kazakhexpress/api-gateway/internal/gateway"
@@ -12,11 +14,28 @@ import (
 	"kazakhexpress/api-gateway/internal/productservice"
 	"kazakhexpress/api-gateway/internal/reviewservice"
 	"kazakhexpress/api-gateway/internal/userservice"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func Run() error {
 	port := getEnv("API_GATEWAY_PORT", "8080")
-	router := gateway.NewRouter()
+	routerOptions := []gateway.RouterOption{}
+	if redisAddr := getEnv("REDIS_ADDR", ""); redisAddr != "" {
+		redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
+		defer redisClient.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			log.Printf("gateway redis rate limiter disabled: %v", err)
+		} else {
+			limit := getEnvInt("RATE_LIMIT_REQUESTS", 120)
+			window := time.Duration(getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60)) * time.Second
+			routerOptions = append(routerOptions, gateway.WithRateLimiter(gateway.NewRedisRateLimiter(redisClient), limit, window))
+			log.Printf("gateway redis rate limiter enabled: %d requests per %s", limit, window)
+		}
+		cancel()
+	}
+	router := gateway.NewRouter(routerOptions...)
 
 	paymentClient, err := paymentservice.NewGRPCClient(getEnv("PAYMENT_GRPC_ADDR", "localhost:9093"))
 	if err != nil {
@@ -67,4 +86,16 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
 }

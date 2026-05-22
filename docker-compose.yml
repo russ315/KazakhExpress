@@ -220,6 +220,9 @@ services:
       PAYMENT_GRPC_ADDR: payment-service:9093
       PRODUCT_GRPC_ADDR: product-service:9095
       REVIEW_GRPC_ADDR: review-service:9096
+      REDIS_ADDR: redis:6379
+      RATE_LIMIT_REQUESTS: "120"
+      RATE_LIMIT_WINDOW_SECONDS: "60"
       GIN_MODE: release
     ports:
       - "8080:8080"
@@ -238,6 +241,8 @@ services:
       product-service:
         condition: service_started
       review-service:
+        condition: service_started
+      redis:
         condition: service_started
 
   seed-data:

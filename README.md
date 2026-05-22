@@ -59,6 +59,13 @@ curl http://localhost:8080/payment/health
 curl http://localhost:8080/products
 ```
 
+Gateway rate limiting is backed by Redis. Defaults:
+
+```txt
+RATE_LIMIT_REQUESTS=120
+RATE_LIMIT_WINDOW_SECONDS=60
+```
+
 Seed catalog products with image uploads to MinIO and demo reviews:
 
 ```powershell
