@@ -4,6 +4,7 @@ set -euo pipefail
 DOMAIN="${DOMAIN:-kazexp.maqsatto.dev}"
 APP_DIR="${APP_DIR:-/opt/kazakhexpress}"
 EMAIL="${LETSENCRYPT_EMAIL:-admin@maqsatto.dev}"
+PUBLIC_IP="${PUBLIC_IP:-}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "run as root"
@@ -60,6 +61,15 @@ server {
     root /var/www/certbot;
   }
 
+  location /api/ {
+    proxy_pass http://127.0.0.1:8080/;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+
   location / {
     proxy_pass http://127.0.0.1:5173;
     proxy_http_version 1.1;
@@ -73,6 +83,13 @@ NGINX
 ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
 nginx -t
 systemctl reload nginx
+
+resolved_ip="$(getent ahostsv4 "$DOMAIN" | awk 'NR==1 {print $1}')"
+if [[ -n "$PUBLIC_IP" && "$resolved_ip" != "$PUBLIC_IP" ]]; then
+  echo "DNS for ${DOMAIN} resolves to '${resolved_ip:-empty}', expected '${PUBLIC_IP}'. Skipping HTTPS for now."
+  docker compose ps
+  exit 0
+fi
 
 if certbot certificates -d "$DOMAIN" >/dev/null 2>&1; then
   cp deploy/nginx/kazexp.maqsatto.dev.conf "/etc/nginx/sites-available/${DOMAIN}.conf"
