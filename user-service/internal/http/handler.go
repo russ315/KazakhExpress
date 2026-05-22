@@ -3,13 +3,51 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"kazakhexpress/user-service/internal/user"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Handler struct {
 	service user.Service
+}
+
+var (
+	metricsOnce sync.Once
+
+	httpRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kazakhexpress_http_requests_total",
+			Help: "Total number of HTTP requests by service, route, status and method.",
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kazakhexpress_http_request_duration_seconds",
+			Help:    "HTTP request latency by service, route, status and method.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpInflight = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kazakhexpress_http_in_flight_requests",
+			Help: "Current in-flight HTTP requests by service.",
+		},
+		[]string{"service"},
+	)
+)
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(httpRequests, httpDuration, httpInflight)
+	})
 }
 
 func NewHandler(service user.Service) *Handler {
@@ -19,22 +57,44 @@ func NewHandler(service user.Service) *Handler {
 }
 
 func (h *Handler) Routes() http.Handler {
+	initMetrics()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/health", h.handleHealth)
-	mux.HandleFunc("/metrics", h.handleMetrics)
-	mux.HandleFunc("/auth/register", h.handleRegister)
-	mux.HandleFunc("/auth/login", h.handleLogin)
-	mux.HandleFunc("/users/me", h.withAuth(h.handleProfile))
-	mux.HandleFunc("/users/", h.handleGetUserByID)
+	mux.Handle("/health", instrument("user-service", "/health", http.HandlerFunc(h.handleHealth)))
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/auth/register", instrument("user-service", "/auth/register", http.HandlerFunc(h.handleRegister)))
+	mux.Handle("/auth/login", instrument("user-service", "/auth/login", http.HandlerFunc(h.handleLogin)))
+	mux.Handle("/users/me", instrument("user-service", "/users/me", http.HandlerFunc(h.withAuth(h.handleProfile))))
+	mux.Handle("/users/", instrument("user-service", "/users/{id}", http.HandlerFunc(h.handleGetUserByID)))
 
 	return mux
 }
 
-func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("kazakhexpress_service_up{service=\"user\"} 1\n"))
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func instrument(service, route string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		httpInflight.WithLabelValues(service).Inc()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		status := strconv.Itoa(rec.status)
+		httpRequests.WithLabelValues(service, r.Method, route, status).Inc()
+		httpDuration.WithLabelValues(service, r.Method, route, status).Observe(time.Since(start).Seconds())
+		httpInflight.WithLabelValues(service).Dec()
+	})
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

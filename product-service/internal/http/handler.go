@@ -5,14 +5,51 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"kazakhexpress/product-service/internal/product"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Handler struct {
 	service *product.Service
+}
+
+var (
+	metricsOnce sync.Once
+
+	httpRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kazakhexpress_http_requests_total",
+			Help: "Total number of HTTP requests by service, route, status and method.",
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kazakhexpress_http_request_duration_seconds",
+			Help:    "HTTP request latency by service, route, status and method.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpInflight = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kazakhexpress_http_in_flight_requests",
+			Help: "Current in-flight HTTP requests by service.",
+		},
+		[]string{"service"},
+	)
+)
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(httpRequests, httpDuration, httpInflight)
+	})
 }
 
 func NewHandler(service *product.Service) *Handler {
@@ -20,10 +57,11 @@ func NewHandler(service *product.Service) *Handler {
 }
 
 func (h *Handler) Routes() http.Handler {
+	initMetrics()
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(metricsMiddleware("product-service"), gin.Logger(), gin.Recovery())
 	router.GET("/health", h.health)
-	router.GET("/metrics", h.metrics)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.POST("/products", h.createProduct)
 	router.GET("/products", h.listProducts)
 	router.GET("/products/:id", h.getProduct)
@@ -36,8 +74,24 @@ func (h *Handler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "product"})
 }
 
-func (h *Handler) metrics(c *gin.Context) {
-	c.String(http.StatusOK, "kazakhexpress_service_up{service=\"product\"} 1\n")
+func metricsMiddleware(service string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/metrics" {
+			c.Next()
+			return
+		}
+		start := time.Now()
+		httpInflight.WithLabelValues(service).Inc()
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		status := strconv.Itoa(c.Writer.Status())
+		httpRequests.WithLabelValues(service, c.Request.Method, route, status).Inc()
+		httpDuration.WithLabelValues(service, c.Request.Method, route, status).Observe(time.Since(start).Seconds())
+		httpInflight.WithLabelValues(service).Dec()
+	}
 }
 
 func (h *Handler) createProduct(c *gin.Context) {

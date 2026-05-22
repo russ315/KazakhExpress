@@ -54,10 +54,19 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Order, error) 
 		UpdatedAt:  now,
 	}
 
+	dbStart := time.Now()
 	created, err := s.repo.Create(ctx, order)
 	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("create", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStart).Seconds())
 		return Order{}, err
 	}
+	OrderDBOperationsTotal.WithLabelValues("create", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStart).Seconds())
+
+	OrdersCreatedTotal.Inc()
+	OrderRevenueKZTTotal.Add(float64(created.TotalKZT))
+
 	s.cacheStatus(ctx, created)
 	s.publish(ctx, "order.created", func() error {
 		return s.publisher.PublishOrderCreated(ctx, eventFromOrder(created, ""))
@@ -66,7 +75,16 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Order, error) 
 }
 
 func (s *Service) List(ctx context.Context) ([]Order, error) {
-	return s.repo.List(ctx)
+	dbStart := time.Now()
+	res, err := s.repo.List(ctx)
+	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("list", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+		return nil, err
+	}
+	OrderDBOperationsTotal.WithLabelValues("list", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) GetByID(ctx context.Context, id string) (Order, error) {
@@ -74,7 +92,16 @@ func (s *Service) GetByID(ctx context.Context, id string) (Order, error) {
 		return Order{}, ErrInvalidInput
 	}
 
-	return s.repo.GetByID(ctx, id)
+	dbStart := time.Now()
+	res, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+		return Order{}, err
+	}
+	OrderDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, id string, status Status) (Order, error) {
@@ -82,15 +109,28 @@ func (s *Service) UpdateStatus(ctx context.Context, id string, status Status) (O
 		return Order{}, ErrInvalidInput
 	}
 
+	dbStart := time.Now()
 	order, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
 		return Order{}, err
 	}
+	OrderDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
 
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.UpdateStatus(ctx, id, order.Status, status, "manual status update")
 	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("update_status", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("update_status").Observe(time.Since(dbStartUpdate).Seconds())
 		return Order{}, err
 	}
+	OrderDBOperationsTotal.WithLabelValues("update_status", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("update_status").Observe(time.Since(dbStartUpdate).Seconds())
+
+	OrderStatusTransitionsTotal.WithLabelValues(string(order.Status), string(status)).Inc()
+
 	s.cacheStatus(ctx, updated)
 	if updated.Status == StatusCompleted {
 		s.publish(ctx, "order.completed", func() error {
@@ -105,18 +145,33 @@ func (s *Service) Cancel(ctx context.Context, id string, reason string) (Order, 
 	if id == "" {
 		return Order{}, ErrInvalidInput
 	}
+	dbStart := time.Now()
 	order, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
 		return Order{}, err
 	}
+	OrderDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+
 	if order.Status == StatusCompleted || order.Status == StatusCanceled {
 		return Order{}, ErrInvalidInput
 	}
 
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.UpdateStatus(ctx, id, order.Status, StatusCanceled, reason)
 	if err != nil {
+		OrderDBOperationsTotal.WithLabelValues("cancel_update", "error").Inc()
+		OrderDBOperationDurationSeconds.WithLabelValues("cancel_update").Observe(time.Since(dbStartUpdate).Seconds())
 		return Order{}, err
 	}
+	OrderDBOperationsTotal.WithLabelValues("cancel_update", "success").Inc()
+	OrderDBOperationDurationSeconds.WithLabelValues("cancel_update").Observe(time.Since(dbStartUpdate).Seconds())
+
+	OrderStatusTransitionsTotal.WithLabelValues(string(order.Status), string(StatusCanceled)).Inc()
+	OrdersCancelledTotal.WithLabelValues(reason).Inc()
+
 	s.cacheStatus(ctx, updated)
 	s.publish(ctx, "order.cancelled", func() error {
 		return s.publisher.PublishOrderCancelled(ctx, eventFromOrder(updated, reason))

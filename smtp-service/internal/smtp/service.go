@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	netsmtp "net/smtp"
+	"time"
 )
 
 type Config struct {
@@ -29,19 +30,53 @@ func NewService(config Config) *Service {
 	return &Service{config: config}
 }
 
+func getEmailType(subject string) string {
+	switch {
+	case subject == WelcomeSubject():
+		return "welcome"
+	case subject == PaymentReceiptSubject():
+		return "receipt"
+	case subject == PaymentRefundSubject():
+		return "refund"
+	case subject == PaymentFailureSubject():
+		return "failure"
+	default:
+		return "unknown"
+	}
+}
+
 func (s *Service) SendEmail(ctx context.Context, to string, subject string, body string) error {
+	emailType := getEmailType(subject)
+	start := time.Now()
+
 	if to == "" || subject == "" || body == "" {
+		EmailFailuresTotal.WithLabelValues(emailType, "missing_arguments").Inc()
 		return fmt.Errorf("email to, subject and body are required")
 	}
+
 	if s.config.ResendAPIKey != "" {
-		return s.sendResend(ctx, to, subject, body)
-	}
-	if s.config.Username == "" || s.config.Password == "" {
-		log.Printf("smtp dry-run to=%s subject=%q", to, subject)
+		err := s.sendResend(ctx, to, subject, body)
+		duration := time.Since(start).Seconds()
+		if err != nil {
+			EmailFailuresTotal.WithLabelValues(emailType, "resend_error").Inc()
+			return err
+		}
+		EmailsSentTotal.WithLabelValues(emailType).Inc()
+		EmailDeliveryDurationSeconds.WithLabelValues(emailType, "resend").Observe(duration)
 		return nil
 	}
+
+	if s.config.Username == "" || s.config.Password == "" {
+		log.Printf("smtp dry-run to=%s subject=%q", to, subject)
+		duration := time.Since(start).Seconds()
+		EmailsSentTotal.WithLabelValues(emailType).Inc()
+		EmailDeliveryDurationSeconds.WithLabelValues(emailType, "dry_run").Observe(duration)
+		return nil
+	}
+
 	select {
 	case <-ctx.Done():
+		EmailFailuresTotal.WithLabelValues(emailType, "context_cancelled").Inc()
 		return ctx.Err()
 	default:
 	}
@@ -50,8 +85,13 @@ func (s *Service) SendEmail(ctx context.Context, to string, subject string, body
 	message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s", s.config.From, to, subject, body)
 	addr := fmt.Sprintf("%s:%s", s.config.Host, s.config.Port)
 	if err := netsmtp.SendMail(addr, auth, s.config.From, []string{to}, []byte(message)); err != nil {
+		EmailFailuresTotal.WithLabelValues(emailType, "smtp_error").Inc()
 		return fmt.Errorf("send smtp email: %w", err)
 	}
+
+	duration := time.Since(start).Seconds()
+	EmailsSentTotal.WithLabelValues(emailType).Inc()
+	EmailDeliveryDurationSeconds.WithLabelValues(emailType, "smtp").Observe(duration)
 	return nil
 }
 

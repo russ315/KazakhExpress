@@ -3,14 +3,52 @@ package http
 import (
 	"errors"
 	nethttp "net/http"
+	"strconv"
+	"sync"
+	"time"
 
 	"kazakhexpress/payment-service/internal/payment"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Handler struct {
 	service *payment.Service
+}
+
+var (
+	metricsOnce sync.Once
+
+	httpRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kazakhexpress_http_requests_total",
+			Help: "Total number of HTTP requests by service, route, status and method.",
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kazakhexpress_http_request_duration_seconds",
+			Help:    "HTTP request latency by service, route, status and method.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpInflight = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kazakhexpress_http_in_flight_requests",
+			Help: "Current in-flight HTTP requests by service.",
+		},
+		[]string{"service"},
+	)
+)
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(httpRequests, httpDuration, httpInflight)
+	})
 }
 
 func NewHandler(service *payment.Service) *Handler {
@@ -18,11 +56,12 @@ func NewHandler(service *payment.Service) *Handler {
 }
 
 func (h *Handler) Routes() nethttp.Handler {
+	initMetrics()
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(metricsMiddleware("payment-service"), gin.Logger(), gin.Recovery())
 
 	router.GET("/health", h.health)
-	router.GET("/metrics", h.metrics)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	paymentGroup := router.Group("/payment")
 	h.registerPaymentRoutes(paymentGroup)
@@ -45,9 +84,24 @@ func (h *Handler) health(c *gin.Context) {
 	c.JSON(nethttp.StatusOK, gin.H{"status": "ok", "service": "payment"})
 }
 
-func (h *Handler) metrics(c *gin.Context) {
-	c.Header("Content-Type", "text/plain; version=0.0.4")
-	c.String(nethttp.StatusOK, "# HELP payment_service_up Payment service process health.\n# TYPE payment_service_up gauge\npayment_service_up 1\n")
+func metricsMiddleware(service string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/metrics" {
+			c.Next()
+			return
+		}
+		start := time.Now()
+		httpInflight.WithLabelValues(service).Inc()
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		status := strconv.Itoa(c.Writer.Status())
+		httpRequests.WithLabelValues(service, c.Request.Method, route, status).Inc()
+		httpDuration.WithLabelValues(service, c.Request.Method, route, status).Observe(time.Since(start).Seconds())
+		httpInflight.WithLabelValues(service).Dec()
+	}
 }
 
 func (h *Handler) createPayment(c *gin.Context) {

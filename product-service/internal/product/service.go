@@ -46,10 +46,19 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Product, error
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+
+	dbStart := time.Now()
 	created, err := s.repo.Create(ctx, p)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("create", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStart).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("create", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStart).Seconds())
+
+	ProductsCreatedTotal.Inc()
+
 	if s.publisher != nil {
 		_ = s.publisher.PublishProductCreated(ctx, Event{ProductID: created.ID, Name: created.Name, Stock: created.Stock, OccurredAt: now})
 	}
@@ -57,30 +66,63 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Product, error
 }
 
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]Product, error) {
-	return s.repo.List(ctx, filter)
+	dbStart := time.Now()
+	res, err := s.repo.List(ctx, filter)
+	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("list", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+		return nil, err
+	}
+	ProductDBOperationsTotal.WithLabelValues("list", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) GetByID(ctx context.Context, id string) (Product, error) {
 	if id == "" {
 		return Product{}, ErrInvalidInput
 	}
-	return s.repo.GetByID(ctx, id)
+	dbStart := time.Now()
+	res, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+		return Product{}, err
+	}
+	ProductDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) UpdateStock(ctx context.Context, id string, stock int) (Product, error) {
 	if id == "" || stock < 0 {
 		return Product{}, ErrInvalidInput
 	}
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	p.Stock = stock
 	p.UpdatedAt = time.Now().UTC()
+
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("update_stock", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("update_stock").Observe(time.Since(dbStartUpdate).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("update_stock", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("update_stock").Observe(time.Since(dbStartUpdate).Seconds())
+
+	ProductStockUpdatesTotal.WithLabelValues("update").Inc()
+
 	if s.publisher != nil {
 		_ = s.publisher.PublishStockUpdated(ctx, Event{ProductID: id, Stock: stock, OccurredAt: updated.UpdatedAt})
 	}
@@ -91,19 +133,34 @@ func (s *Service) ReserveStock(ctx context.Context, id string, quantity int) (Pr
 	if id == "" || quantity <= 0 {
 		return Product{}, ErrInvalidInput
 	}
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	if p.Stock < quantity {
 		return Product{}, ErrInvalidInput
 	}
 	p.Stock -= quantity
 	p.UpdatedAt = time.Now().UTC()
+
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("reserve_stock", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("reserve_stock").Observe(time.Since(dbStartUpdate).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("reserve_stock", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("reserve_stock").Observe(time.Since(dbStartUpdate).Seconds())
+
+	ProductStockUpdatesTotal.WithLabelValues("reserve").Inc()
+
 	if s.publisher != nil {
 		_ = s.publisher.PublishStockReserved(ctx, Event{ProductID: id, Quantity: quantity, Stock: updated.Stock, OccurredAt: updated.UpdatedAt})
 	}
@@ -114,16 +171,31 @@ func (s *Service) ReleaseStock(ctx context.Context, id string, quantity int) (Pr
 	if id == "" || quantity <= 0 {
 		return Product{}, ErrInvalidInput
 	}
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	p.Stock += quantity
 	p.UpdatedAt = time.Now().UTC()
+
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("release_stock", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("release_stock").Observe(time.Since(dbStartUpdate).Seconds())
 		return Product{}, err
 	}
+	ProductDBOperationsTotal.WithLabelValues("release_stock", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("release_stock").Observe(time.Since(dbStartUpdate).Seconds())
+
+	ProductStockUpdatesTotal.WithLabelValues("release").Inc()
+
 	if s.publisher != nil {
 		_ = s.publisher.PublishStockReleased(ctx, Event{ProductID: id, Quantity: quantity, Stock: updated.Stock, OccurredAt: updated.UpdatedAt})
 	}
@@ -144,6 +216,8 @@ func (s *Service) AddImage(ctx context.Context, input ImageInput) (ProductImage,
 	if err != nil {
 		return ProductImage{}, err
 	}
+	ProductImageUploadsTotal.WithLabelValues(input.ContentType).Inc()
+
 	image := ProductImage{
 		ID:        fmt.Sprintf("img-%d", now.UnixNano()),
 		ProductID: input.ProductID,
@@ -151,5 +225,16 @@ func (s *Service) AddImage(ctx context.Context, input ImageInput) (ProductImage,
 		URL:       url,
 		CreatedAt: now,
 	}
-	return s.repo.AddImage(ctx, image)
+
+	dbStart := time.Now()
+	res, err := s.repo.AddImage(ctx, image)
+	if err != nil {
+		ProductDBOperationsTotal.WithLabelValues("add_image", "error").Inc()
+		ProductDBOperationDurationSeconds.WithLabelValues("add_image").Observe(time.Since(dbStart).Seconds())
+		return ProductImage{}, err
+	}
+	ProductDBOperationsTotal.WithLabelValues("add_image", "success").Inc()
+	ProductDBOperationDurationSeconds.WithLabelValues("add_image").Observe(time.Since(dbStart).Seconds())
+
+	return res, nil
 }

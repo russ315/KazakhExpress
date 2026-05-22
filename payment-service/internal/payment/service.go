@@ -57,10 +57,24 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Payment, error
 		return Payment{}, ErrInvalidInput
 	}
 
+	dbStartGet := time.Now()
 	if paymentID, ok, err := s.idempotency.GetPaymentID(ctx, input.IdempotencyKey); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_idempotency", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_idempotency").Observe(time.Since(dbStartGet).Seconds())
 		return Payment{}, err
 	} else if ok {
-		return s.repo.GetByID(ctx, paymentID)
+		PaymentDBOperationsTotal.WithLabelValues("get_idempotency", "success").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_idempotency").Observe(time.Since(dbStartGet).Seconds())
+		dbStartGetByID := time.Now()
+		res, err := s.repo.GetByID(ctx, paymentID)
+		if err != nil {
+			PaymentDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+			PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGetByID).Seconds())
+			return Payment{}, err
+		}
+		PaymentDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGetByID).Seconds())
+		return res, nil
 	}
 
 	now := time.Now().UTC()
@@ -77,24 +91,46 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Payment, error
 		UpdatedAt:      now,
 	}
 
+	dbStartCreate := time.Now()
 	created, err := s.repo.Create(ctx, p)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("create", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStartCreate).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("create", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStartCreate).Seconds())
+
+	dbStartSaveIdem := time.Now()
 	if err := s.idempotency.SavePaymentID(ctx, input.IdempotencyKey, created.ID); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("save_idempotency", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("save_idempotency").Observe(time.Since(dbStartSaveIdem).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("save_idempotency", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("save_idempotency").Observe(time.Since(dbStartSaveIdem).Seconds())
 
 	event := paymentEvent(created)
+	dbStartAppend := time.Now()
 	if err := s.repo.AppendEvent(ctx, event); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("append_event", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("append_event", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
+
 	if err := s.publisher.PublishPaymentCreated(ctx, event); err != nil {
 		return Payment{}, err
 	}
 
+	PaymentAttemptsTotal.WithLabelValues(string(created.Method)).Inc()
+
+	startCharge := time.Now()
 	result, err := s.provider.Charge(ctx, created)
 	if err != nil {
+		PaymentFailuresTotal.WithLabelValues(string(created.Method), "provider_error").Inc()
+		PaymentProcessingDurationSeconds.WithLabelValues(string(created.Method), "provider_error").Observe(time.Since(startCharge).Seconds())
 		return Payment{}, err
 	}
 	created.ProviderTransactionID = result.ProviderTransactionID
@@ -109,15 +145,30 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Payment, error
 	}
 	created.UpdatedAt = time.Now().UTC()
 
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, created)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("update", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("update", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
+
 	event = paymentEvent(updated)
+	dbStartAppend2 := time.Now()
 	if err := s.repo.AppendEvent(ctx, event); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("append_event_result", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("append_event_result").Observe(time.Since(dbStartAppend2).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("append_event_result", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("append_event_result").Observe(time.Since(dbStartAppend2).Seconds())
+
 	if updated.Status == StatusFailed {
+		PaymentFailuresTotal.WithLabelValues(string(updated.Method), updated.FailureReason).Inc()
+		PaymentProcessingDurationSeconds.WithLabelValues(string(updated.Method), "failed").Observe(time.Since(startCharge).Seconds())
+
 		if err := s.publisher.PublishPaymentFailed(ctx, event); err != nil {
 			return Payment{}, err
 		}
@@ -132,6 +183,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Payment, error
 		}
 		return updated, nil
 	}
+
+	PaymentSuccessTotal.WithLabelValues(string(updated.Method)).Inc()
+	PaymentAmountKZTTotal.Add(float64(updated.AmountKZT))
+	PaymentProcessingDurationSeconds.WithLabelValues(string(updated.Method), "success").Observe(time.Since(startCharge).Seconds())
+
 	if err := s.publisher.PublishPaymentSucceeded(ctx, event); err != nil {
 		return Payment{}, err
 	}
@@ -151,25 +207,61 @@ func (s *Service) GetByID(ctx context.Context, id string) (Payment, error) {
 	if id == "" {
 		return Payment{}, ErrInvalidInput
 	}
-	return s.repo.GetByID(ctx, id)
+	dbStart := time.Now()
+	res, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+		return Payment{}, err
+	}
+	PaymentDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]Payment, error) {
-	return s.repo.List(ctx, ListFilter{})
+	dbStart := time.Now()
+	res, err := s.repo.List(ctx, ListFilter{})
+	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("list", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+		return nil, err
+	}
+	PaymentDBOperationsTotal.WithLabelValues("list", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("list").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) ListByCustomerID(ctx context.Context, customerID string) ([]Payment, error) {
 	if customerID == "" {
 		return nil, ErrInvalidInput
 	}
-	return s.repo.List(ctx, ListFilter{CustomerID: customerID})
+	dbStart := time.Now()
+	res, err := s.repo.List(ctx, ListFilter{CustomerID: customerID})
+	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("list_by_customer", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("list_by_customer").Observe(time.Since(dbStart).Seconds())
+		return nil, err
+	}
+	PaymentDBOperationsTotal.WithLabelValues("list_by_customer", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("list_by_customer").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) GetByOrderID(ctx context.Context, orderID string) (Payment, error) {
 	if orderID == "" {
 		return Payment{}, ErrInvalidInput
 	}
-	return s.repo.GetByOrderID(ctx, orderID)
+	dbStart := time.Now()
+	res, err := s.repo.GetByOrderID(ctx, orderID)
+	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_by_order", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_order").Observe(time.Since(dbStart).Seconds())
+		return Payment{}, err
+	}
+	PaymentDBOperationsTotal.WithLabelValues("get_by_order", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("get_by_order").Observe(time.Since(dbStart).Seconds())
+	return res, nil
 }
 
 func (s *Service) Refund(ctx context.Context, input RefundInput) (Payment, error) {
@@ -177,10 +269,16 @@ func (s *Service) Refund(ctx context.Context, input RefundInput) (Payment, error
 		return Payment{}, ErrInvalidInput
 	}
 
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, input.PaymentID)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	if p.Status == StatusRefunded {
 		return Payment{}, ErrInvalidState
 	}
@@ -192,16 +290,27 @@ func (s *Service) Refund(ctx context.Context, input RefundInput) (Payment, error
 	p.RefundReason = input.Reason
 	p.UpdatedAt = time.Now().UTC()
 
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("update", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("update", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
 
 	event := paymentEvent(updated)
 	event.Reason = input.Reason
+	dbStartAppend := time.Now()
 	if err := s.repo.AppendEvent(ctx, event); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("append_event", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("append_event", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
+
 	if err := s.publisher.PublishPaymentRefunded(ctx, event); err != nil {
 		return Payment{}, err
 	}
@@ -222,10 +331,16 @@ func (s *Service) Confirm(ctx context.Context, input ConfirmInput) (Payment, err
 	if input.PaymentID == "" || input.ProviderTransactionID == "" {
 		return Payment{}, ErrInvalidInput
 	}
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, input.PaymentID)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	if p.Status == StatusSucceeded {
 		return p, nil
 	}
@@ -235,14 +350,27 @@ func (s *Service) Confirm(ctx context.Context, input ConfirmInput) (Payment, err
 	p.Status = StatusSucceeded
 	p.ProviderTransactionID = input.ProviderTransactionID
 	p.UpdatedAt = time.Now().UTC()
+
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("update", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("update", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
+
 	event := paymentEvent(updated)
+	dbStartAppend := time.Now()
 	if err := s.repo.AppendEvent(ctx, event); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("append_event", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("append_event", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
+
 	if err := s.publisher.PublishPaymentSucceeded(ctx, event); err != nil {
 		return Payment{}, err
 	}
@@ -258,25 +386,44 @@ func (s *Service) Cancel(ctx context.Context, input CancelInput) (Payment, error
 	if input.PaymentID == "" || input.Reason == "" {
 		return Payment{}, ErrInvalidInput
 	}
+	dbStartGet := time.Now()
 	p, err := s.repo.GetByID(ctx, input.PaymentID)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStartGet).Seconds())
+
 	if p.Status == StatusRefunded || p.Status == StatusCancelled {
 		return Payment{}, ErrInvalidState
 	}
 	p.Status = StatusCancelled
 	p.FailureReason = input.Reason
 	p.UpdatedAt = time.Now().UTC()
+
+	dbStartUpdate := time.Now()
 	updated, err := s.repo.Update(ctx, p)
 	if err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("update", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("update", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("update").Observe(time.Since(dbStartUpdate).Seconds())
+
 	event := paymentEvent(updated)
 	event.Reason = input.Reason
+	dbStartAppend := time.Now()
 	if err := s.repo.AppendEvent(ctx, event); err != nil {
+		PaymentDBOperationsTotal.WithLabelValues("append_event", "error").Inc()
+		PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
 		return Payment{}, err
 	}
+	PaymentDBOperationsTotal.WithLabelValues("append_event", "success").Inc()
+	PaymentDBOperationDurationSeconds.WithLabelValues("append_event").Observe(time.Since(dbStartAppend).Seconds())
+
 	if err := s.publisher.PublishPaymentCancelled(ctx, event); err != nil {
 		return Payment{}, err
 	}

@@ -68,9 +68,19 @@ func NewService(repo Repository, jwtSecret string, emailSvc EmailService, eventS
 }
 
 func (s *UserService) Register(input *RegisterInput) (*AuthResponse, error) {
+	dbStart := time.Now()
 	existingUser, err := s.repo.GetByEmail(input.Email)
 	if err == nil && existingUser != nil {
+		UserDBOperationsTotal.WithLabelValues("get_by_email", "success").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("get_by_email").Observe(time.Since(dbStart).Seconds())
 		return nil, fmt.Errorf("user with email %s already exists", input.Email)
+	}
+	if err != nil && err.Error() != "user not found" {
+		UserDBOperationsTotal.WithLabelValues("get_by_email", "error").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("get_by_email").Observe(time.Since(dbStart).Seconds())
+	} else {
+		UserDBOperationsTotal.WithLabelValues("get_by_email", "success").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("get_by_email").Observe(time.Since(dbStart).Seconds())
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -88,14 +98,21 @@ func (s *UserService) Register(input *RegisterInput) (*AuthResponse, error) {
 		Address:   input.Address,
 	}
 
+	dbStartCreate := time.Now()
 	if err := s.repo.Create(user); err != nil {
+		UserDBOperationsTotal.WithLabelValues("create", "error").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStartCreate).Seconds())
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
+	UserDBOperationsTotal.WithLabelValues("create", "success").Inc()
+	UserDBOperationDurationSeconds.WithLabelValues("create").Observe(time.Since(dbStartCreate).Seconds())
 
 	token, refreshTokenStr, err := s.generateTokenPair(user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
+
+	UserRegistrationsTotal.Inc()
 
 	if s.emailSvc != nil {
 		go func() {
@@ -119,21 +136,29 @@ func (s *UserService) Register(input *RegisterInput) (*AuthResponse, error) {
 }
 
 func (s *UserService) Login(input *LoginInput) (*AuthResponse, error) {
+	dbStart := time.Now()
 	user, err := s.repo.GetByEmail(input.Email)
 	if err != nil {
+		UserDBOperationsTotal.WithLabelValues("get_by_email", "error").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("get_by_email").Observe(time.Since(dbStart).Seconds())
+		UserLoginsTotal.WithLabelValues("failed").Inc()
 		return nil, fmt.Errorf("invalid email or password")
 	}
+	UserDBOperationsTotal.WithLabelValues("get_by_email", "success").Inc()
+	UserDBOperationDurationSeconds.WithLabelValues("get_by_email").Observe(time.Since(dbStart).Seconds())
 
 	if s.rateLimitSvc != nil {
 		attempts, err := s.rateLimitSvc.CheckLoginRateLimit(context.Background(), input.Email, 5, 15*time.Minute)
 		if err != nil {
 			log.Printf("Rate limit check error: %v", err)
 		} else if attempts > 5 {
+			UserLoginsTotal.WithLabelValues("rate_limited").Inc()
 			return nil, fmt.Errorf("too many login attempts, please try again later")
 		}
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		UserLoginsTotal.WithLabelValues("failed").Inc()
 		return nil, fmt.Errorf("invalid email or password")
 	}
 
@@ -145,6 +170,8 @@ func (s *UserService) Login(input *LoginInput) (*AuthResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
+
+	UserLoginsTotal.WithLabelValues("success").Inc()
 
 	user.Password = ""
 
@@ -160,14 +187,21 @@ func (s *UserService) GetProfile(userID string) (*User, error) {
 		var cached User
 		if err := s.cacheSvc.GetCachedUser(context.Background(), userID, &cached); err == nil {
 			cached.Password = ""
+			UserCacheRequestsTotal.WithLabelValues("true").Inc()
 			return &cached, nil
 		}
+		UserCacheRequestsTotal.WithLabelValues("false").Inc()
 	}
 
+	dbStart := time.Now()
 	user, err := s.repo.GetByID(userID)
 	if err != nil {
+		UserDBOperationsTotal.WithLabelValues("get_by_id", "error").Inc()
+		UserDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
+	UserDBOperationsTotal.WithLabelValues("get_by_id", "success").Inc()
+	UserDBOperationDurationSeconds.WithLabelValues("get_by_id").Observe(time.Since(dbStart).Seconds())
 
 	if s.cacheSvc != nil {
 		go s.cacheSvc.CacheUser(context.Background(), userID, user, 5*time.Minute)

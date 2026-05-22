@@ -13,6 +13,7 @@ import (
 	redisclient "kazakhexpress/user-service/internal/redis"
 	"kazakhexpress/user-service/internal/user"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	userv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/user/v1"
 	"github.com/nats-io/nats.go"
 
@@ -87,9 +88,15 @@ func startGRPCServer(port string, svc user.Service) {
 		log.Fatalf("Failed to listen for gRPC: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcprom.DefaultServerMetrics.EnableHandlingTimeHistogram()
+
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcprom.DefaultServerMetrics.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(grpcprom.DefaultServerMetrics.StreamServerInterceptor()),
+	)
 	grpcHandler := grpcapi.NewUserGRPCHandler(svc)
 	userv1.RegisterUserServiceServer(grpcServer, grpcHandler)
+	grpcprom.DefaultServerMetrics.InitializeMetrics(grpcServer)
 
 	reflection.Register(grpcServer)
 

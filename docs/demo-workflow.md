@@ -50,7 +50,88 @@ NATS monitor is reachable
 Grafana dashboards are provisioned
 ```
 
-## 3. Show Main Flow Manually
+## 3. Run Real Integration Tests
+
+These tests hit real PostgreSQL and real NATS. They are separate from normal unit tests and run with the `integration` build tag.
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/integration.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/integration.sh
+```
+
+They prove:
+
+```txt
+user-service PostgreSQL repository
+order-service PostgreSQL repository
+product-service PostgreSQL repository
+payment-service PostgreSQL repository
+review-service PostgreSQL repository
+user/order/product/payment/review NATS publishers
+```
+
+## 4. Generate Demo Traffic For Grafana
+
+Use this when the dashboards are open and you want clean, repeatable traffic:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo-showcase.ps1 -Interactive
+```
+
+The script pauses between:
+
+```txt
+register user -> welcome email
+list catalog
+create orders
+create payments
+prove idempotency
+refund payment
+create reviews
+generate API load
+```
+
+Watch these dashboards while each step runs:
+
+```txt
+KazakhExpress Ultimate Performance Dashboard
+Backend Overview: request count, latency, errors
+Payment Flow: succeeded/refunded counters
+Catalog And Reviews: review/rating activity
+Messaging And Infra: NATS and infrastructure
+Loki logs: smtp-service dry-run or real email send
+```
+
+## 4b. Sequential Load Workflow (Phase-by-Phase)
+
+Use this when you want a clean, stepwise spike for each subsystem while narrating in Grafana:
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo-load-generator.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/demo-load-generator.sh
+```
+
+Each phase pauses for you to explain the effect, then triggers a focused spike:
+
+```txt
+user registrations -> catalog browsing -> orders -> payments (idempotency) -> reviews
+```
+
+## 5. Show Main Flow Manually
 
 List seeded products:
 
@@ -114,7 +195,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/products/replace-with-
 Invoke-RestMethod http://localhost:8080/products/replace-with-product-id/rating
 ```
 
-## 4. Show Observability
+## 6. Show Observability
 
 Open:
 
@@ -127,6 +208,7 @@ MinIO:        http://localhost:9001  minioadmin/minioadmin
 Grafana dashboards:
 
 ```txt
+KazakhExpress Ultimate Performance Dashboard
 KazakhExpress Backend Overview
 KazakhExpress Payment Flow
 KazakhExpress Catalog And Reviews
