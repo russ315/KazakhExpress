@@ -1,0 +1,43 @@
+name: backend-integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  postgres-nats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: KazakhExpress
+
+      - uses: actions/checkout@v4
+        with:
+          repository: maqsatto/kazakhexpress-proto
+          path: kazakhexpress-proto
+          ref: ${{ github.ref_name == 'feat/maqsat-commits' && 'feat/maqsat-commits' || 'main' }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Start PostgreSQL and NATS
+        working-directory: KazakhExpress
+        run: docker compose up -d postgres nats migrate
+
+      - name: Run integration tests
+        working-directory: KazakhExpress
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/kazakhexpress?sslmode=disable
+          NATS_URL: nats://localhost:4222
+        run: bash scripts/integration.sh
+
+      - name: Logs on failure
+        if: failure()
+        working-directory: KazakhExpress
+        run: docker compose logs --tail=200 postgres nats migrate
+
+      - name: Stop services
+        if: always()
+        working-directory: KazakhExpress
+        run: docker compose down -v --remove-orphans

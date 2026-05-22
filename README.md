@@ -160,6 +160,27 @@ docker compose --profile seed run --rm seed-data
 powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1
 ```
 
+PostgreSQL and NATS integration tests:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/integration.ps1
+```
+
+Teacher demo flow with step-by-step API load for Grafana:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo-showcase.ps1 -Interactive
+```
+
+Useful dashboards while the demo script runs:
+
+```txt
+KazakhExpress Backend Overview
+KazakhExpress Payment Flow
+KazakhExpress Catalog And Reviews
+KazakhExpress Messaging And Infra
+```
+
 Demo runbook:
 
 ```txt

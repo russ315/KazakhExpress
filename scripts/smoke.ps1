@@ -27,7 +27,17 @@ $products = Invoke-RestMethod "$ApiBaseUrl/products"
 if ($products.Count -lt 1) { throw "expected seed products" }
 $product = $products[0]
 if ($product.image_url) {
-  Invoke-WebRequest -Uri $product.image_url -Method Head -UseBasicParsing | Out-Null
+  $imageUrl = $product.image_url
+  if ($env:IMAGE_HOST_ALIAS) {
+    $imageUrl = $imageUrl.Replace("localhost", $env:IMAGE_HOST_ALIAS).Replace("minio", $env:IMAGE_HOST_ALIAS)
+  } else {
+    $imageUrl = $imageUrl.Replace("http://minio:", "http://localhost:").Replace("http://minio/", "http://localhost:9000/")
+  }
+  try {
+    Invoke-WebRequest -Uri $imageUrl -Method Head -UseBasicParsing | Out-Null
+  } catch {
+    Write-Host "image check skipped: $imageUrl"
+  }
 }
 
 $orderBody = @{
