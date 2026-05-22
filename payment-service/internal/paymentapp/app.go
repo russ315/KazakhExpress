@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	paymentv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/payment/v1"
 	"github.com/nats-io/nats.go"
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
@@ -97,50 +96,16 @@ func mustEmailSender() payment.EmailSender {
 }
 
 func newPublisher(ctx context.Context) (payment.EventPublisher, func(), error) {
-	if getEnv("MESSAGE_BROKER", "rabbitmq") == "nats" {
-		var natsConn *nats.Conn
-		err := retry(ctx, "nats", func() error {
-			var err error
-			natsConn, err = nats.Connect(getEnv("NATS_URL", nats.DefaultURL))
-			return err
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		return messaging.NewNATSPublisher(natsConn), natsConn.Close, nil
-	}
-
-	var (
-		conn      *amqp.Connection
-		channel   *amqp.Channel
-		publisher *messaging.RabbitPublisher
-	)
-	err := retry(ctx, "rabbitmq", func() error {
+	var natsConn *nats.Conn
+	err := retry(ctx, "nats", func() error {
 		var err error
-		conn, err = amqp.Dial(getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"))
-		if err != nil {
-			return err
-		}
-		channel, err = conn.Channel()
-		if err != nil {
-			_ = conn.Close()
-			return err
-		}
-		publisher, err = messaging.NewRabbitPublisher(channel, getEnv("RABBITMQ_EXCHANGE", "kazakhexpress.events"))
-		if err != nil {
-			_ = channel.Close()
-			_ = conn.Close()
-			return err
-		}
-		return nil
+		natsConn, err = nats.Connect(getEnv("NATS_URL", nats.DefaultURL))
+		return err
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return publisher, func() {
-		_ = channel.Close()
-		_ = conn.Close()
-	}, nil
+	return messaging.NewNATSPublisher(natsConn), natsConn.Close, nil
 }
 
 func retry(ctx context.Context, name string, operation func() error) error {

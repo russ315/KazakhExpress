@@ -8,7 +8,6 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/maqsatto/kazakhexpress-proto v0.0.0-00010101000000-000000000000
 	github.com/nats-io/nats.go v1.43.0
-	github.com/rabbitmq/amqp091-go v1.11.0
 	github.com/redis/go-redis/v9 v9.19.0
 	google.golang.org/grpc v1.81.1
 )

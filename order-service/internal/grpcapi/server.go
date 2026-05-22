@@ -2,155 +2,137 @@ package grpcapi
 
 import (
 	"context"
+	"time"
 
 	"kazakhexpress/order-service/internal/order"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/encoding"
+	orderv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/order/v1"
 )
 
-const ServiceName = "kazakhexpress.order.v1.OrderService"
-
 type Server struct {
+	orderv1.UnimplementedOrderServiceServer
 	service *order.Service
-}
-
-type OrderServer interface {
-	CreateOrder(context.Context, *order.CreateInput) (*order.Order, error)
-	GetOrder(context.Context, *GetOrderRequest) (*order.Order, error)
-	ListOrders(context.Context, *ListOrdersRequest) (*ListOrdersResponse, error)
-	UpdateOrderStatus(context.Context, *UpdateOrderStatusRequest) (*order.Order, error)
-	CancelOrder(context.Context, *CancelOrderRequest) (*order.Order, error)
-}
-
-type GetOrderRequest struct {
-	OrderID string `json:"order_id"`
-}
-
-type ListOrdersRequest struct{}
-
-type ListOrdersResponse struct {
-	Orders []order.Order `json:"orders"`
-}
-
-type UpdateOrderStatusRequest struct {
-	OrderID string       `json:"order_id"`
-	Status  order.Status `json:"status"`
-}
-
-type CancelOrderRequest struct {
-	OrderID string `json:"order_id"`
-	Reason  string `json:"reason"`
-}
-
-func init() {
-	encoding.RegisterCodec(jsonCodec{})
 }
 
 func NewServer(service *order.Service) *Server {
 	return &Server{service: service}
 }
 
-func Register(server *grpc.Server, service *Server) {
-	server.RegisterService(&grpc.ServiceDesc{
-		ServiceName: ServiceName,
-		HandlerType: (*OrderServer)(nil),
-		Methods: []grpc.MethodDesc{
-			{MethodName: "CreateOrder", Handler: createOrderHandler},
-			{MethodName: "GetOrder", Handler: getOrderHandler},
-			{MethodName: "ListOrders", Handler: listOrdersHandler},
-			{MethodName: "UpdateOrderStatus", Handler: updateOrderStatusHandler},
-			{MethodName: "CancelOrder", Handler: cancelOrderHandler},
-		},
-	}, service)
+func (s *Server) HealthCheck(ctx context.Context, req *orderv1.HealthCheckRequest) (*orderv1.HealthCheckResponse, error) {
+	return &orderv1.HealthCheckResponse{Status: "ok"}, nil
 }
 
-func (s *Server) CreateOrder(ctx context.Context, input *order.CreateInput) (*order.Order, error) {
-	result, err := s.service.Create(ctx, *input)
-	return &result, err
-}
-
-func (s *Server) GetOrder(ctx context.Context, input *GetOrderRequest) (*order.Order, error) {
-	result, err := s.service.GetByID(ctx, input.OrderID)
-	return &result, err
-}
-
-func (s *Server) ListOrders(ctx context.Context, input *ListOrdersRequest) (*ListOrdersResponse, error) {
-	result, err := s.service.List(ctx)
-	return &ListOrdersResponse{Orders: result}, err
-}
-
-func (s *Server) UpdateOrderStatus(ctx context.Context, input *UpdateOrderStatusRequest) (*order.Order, error) {
-	result, err := s.service.UpdateStatus(ctx, input.OrderID, input.Status)
-	return &result, err
-}
-
-func (s *Server) CancelOrder(ctx context.Context, input *CancelOrderRequest) (*order.Order, error) {
-	result, err := s.service.Cancel(ctx, input.OrderID, input.Reason)
-	return &result, err
-}
-
-func createOrderHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	input := new(order.CreateInput)
-	if err := dec(input); err != nil {
+func (s *Server) CreateOrder(ctx context.Context, req *orderv1.CreateOrderRequest) (*orderv1.Order, error) {
+	created, err := s.service.Create(ctx, order.CreateInput{CustomerID: req.GetCustomerId(), Items: itemsFromProto(req.GetItems())})
+	if err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(*Server).CreateOrder(ctx, input)
-	}
-	return interceptor(ctx, input, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/CreateOrder"}, func(ctx context.Context, req any) (any, error) {
-		return srv.(*Server).CreateOrder(ctx, req.(*order.CreateInput))
-	})
+	return toProto(created), nil
 }
 
-func getOrderHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	input := new(GetOrderRequest)
-	if err := dec(input); err != nil {
+func (s *Server) GetOrder(ctx context.Context, req *orderv1.GetOrderRequest) (*orderv1.Order, error) {
+	found, err := s.service.GetByID(ctx, req.GetOrderId())
+	if err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(*Server).GetOrder(ctx, input)
-	}
-	return interceptor(ctx, input, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/GetOrder"}, func(ctx context.Context, req any) (any, error) {
-		return srv.(*Server).GetOrder(ctx, req.(*GetOrderRequest))
-	})
+	return toProto(found), nil
 }
 
-func listOrdersHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	input := new(ListOrdersRequest)
-	if err := dec(input); err != nil {
+func (s *Server) ListOrders(ctx context.Context, req *orderv1.ListOrdersRequest) (*orderv1.ListOrdersResponse, error) {
+	orders, err := s.service.List(ctx)
+	if err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(*Server).ListOrders(ctx, input)
+	out := make([]*orderv1.Order, 0, len(orders))
+	for _, item := range orders {
+		out = append(out, toProto(item))
 	}
-	return interceptor(ctx, input, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/ListOrders"}, func(ctx context.Context, req any) (any, error) {
-		return srv.(*Server).ListOrders(ctx, req.(*ListOrdersRequest))
-	})
+	return &orderv1.ListOrdersResponse{Orders: out}, nil
 }
 
-func updateOrderStatusHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	input := new(UpdateOrderStatusRequest)
-	if err := dec(input); err != nil {
+func (s *Server) UpdateOrderStatus(ctx context.Context, req *orderv1.UpdateOrderStatusRequest) (*orderv1.Order, error) {
+	updated, err := s.service.UpdateStatus(ctx, req.GetOrderId(), statusFromProto(req.GetStatus()))
+	if err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(*Server).UpdateOrderStatus(ctx, input)
-	}
-	return interceptor(ctx, input, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/UpdateOrderStatus"}, func(ctx context.Context, req any) (any, error) {
-		return srv.(*Server).UpdateOrderStatus(ctx, req.(*UpdateOrderStatusRequest))
-	})
+	return toProto(updated), nil
 }
 
-func cancelOrderHandler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	input := new(CancelOrderRequest)
-	if err := dec(input); err != nil {
+func (s *Server) CancelOrder(ctx context.Context, req *orderv1.CancelOrderRequest) (*orderv1.Order, error) {
+	cancelled, err := s.service.Cancel(ctx, req.GetOrderId(), req.GetReason())
+	if err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(*Server).CancelOrder(ctx, input)
+	return toProto(cancelled), nil
+}
+
+func toProto(o order.Order) *orderv1.Order {
+	return &orderv1.Order{
+		Id:         o.ID,
+		CustomerId: o.CustomerID,
+		Items:      itemsToProto(o.Items),
+		Status:     statusToProto(o.Status),
+		TotalKzt:   o.TotalKZT,
+		CreatedAt:  formatTime(o.CreatedAt),
+		UpdatedAt:  formatTime(o.UpdatedAt),
 	}
-	return interceptor(ctx, input, &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + ServiceName + "/CancelOrder"}, func(ctx context.Context, req any) (any, error) {
-		return srv.(*Server).CancelOrder(ctx, req.(*CancelOrderRequest))
-	})
+}
+
+func itemsToProto(items []order.Item) []*orderv1.OrderItem {
+	out := make([]*orderv1.OrderItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, &orderv1.OrderItem{ProductId: item.ProductID, Name: item.Name, Quantity: int32(item.Quantity), PriceKzt: item.PriceKZT})
+	}
+	return out
+}
+
+func itemsFromProto(items []*orderv1.OrderItem) []order.Item {
+	out := make([]order.Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, order.Item{ProductID: item.GetProductId(), Name: item.GetName(), Quantity: int(item.GetQuantity()), PriceKZT: item.GetPriceKzt()})
+	}
+	return out
+}
+
+func statusToProto(status order.Status) orderv1.OrderStatus {
+	switch status {
+	case order.StatusCreated:
+		return orderv1.OrderStatus_ORDER_STATUS_CREATED
+	case order.StatusPaid:
+		return orderv1.OrderStatus_ORDER_STATUS_PAID
+	case order.StatusPaymentFailed:
+		return orderv1.OrderStatus_ORDER_STATUS_PAYMENT_FAILED
+	case order.StatusShipped:
+		return orderv1.OrderStatus_ORDER_STATUS_SHIPPED
+	case order.StatusCompleted:
+		return orderv1.OrderStatus_ORDER_STATUS_COMPLETED
+	case order.StatusCanceled:
+		return orderv1.OrderStatus_ORDER_STATUS_CANCELED
+	default:
+		return orderv1.OrderStatus_ORDER_STATUS_UNSPECIFIED
+	}
+}
+
+func statusFromProto(status orderv1.OrderStatus) order.Status {
+	switch status {
+	case orderv1.OrderStatus_ORDER_STATUS_PAID:
+		return order.StatusPaid
+	case orderv1.OrderStatus_ORDER_STATUS_PAYMENT_FAILED:
+		return order.StatusPaymentFailed
+	case orderv1.OrderStatus_ORDER_STATUS_SHIPPED:
+		return order.StatusShipped
+	case orderv1.OrderStatus_ORDER_STATUS_COMPLETED:
+		return order.StatusCompleted
+	case orderv1.OrderStatus_ORDER_STATUS_CANCELED:
+		return order.StatusCanceled
+	default:
+		return order.StatusCreated
+	}
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

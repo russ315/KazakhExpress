@@ -17,11 +17,23 @@ func NewServer(service *smtpservice.Service) *Server {
 	return &Server{service: service}
 }
 
+func (s *Server) HealthCheck(ctx context.Context, input *smtpv1.HealthCheckRequest) (*smtpv1.HealthCheckResponse, error) {
+	return &smtpv1.HealthCheckResponse{Status: "ok"}, nil
+}
+
 func (s *Server) SendEmail(ctx context.Context, input *smtpv1.SendEmailRequest) (*smtpv1.SendEmailResponse, error) {
 	if err := s.service.SendEmail(ctx, input.GetTo(), input.GetSubject(), input.GetBody()); err != nil {
 		return nil, err
 	}
 	return &smtpv1.SendEmailResponse{Accepted: true}, nil
+}
+
+func (s *Server) SendWelcomeEmail(ctx context.Context, input *smtpv1.WelcomeEmailRequest) (*smtpv1.SendEmailResponse, error) {
+	return s.SendEmail(ctx, &smtpv1.SendEmailRequest{
+		To:      input.GetTo(),
+		Subject: smtpservice.WelcomeSubject(),
+		Body:    smtpservice.WelcomeBody(input.GetFirstName()),
+	})
 }
 
 func (s *Server) SendPaymentReceipt(ctx context.Context, input *smtpv1.PaymentReceiptRequest) (*smtpv1.SendEmailResponse, error) {

@@ -17,6 +17,10 @@ func NewServer(service *payment.Service) *Server {
 	return &Server{service: service}
 }
 
+func (s *Server) HealthCheck(ctx context.Context, input *paymentv1.HealthCheckRequest) (*paymentv1.HealthCheckResponse, error) {
+	return &paymentv1.HealthCheckResponse{Status: "ok"}, nil
+}
+
 func (s *Server) CreatePayment(ctx context.Context, input *paymentv1.CreatePaymentRequest) (*paymentv1.Payment, error) {
 	result, err := s.service.Create(ctx, payment.CreateInput{
 		OrderID:        input.GetOrderId(),

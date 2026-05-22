@@ -1,12 +1,14 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
-	"strings"
+	"strconv"
 
 	"kazakhexpress/product-service/internal/product"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
@@ -18,119 +20,99 @@ func NewHandler(service *product.Service) *Handler {
 }
 
 func (h *Handler) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", h.health)
-	mux.HandleFunc("/products", h.products)
-	mux.HandleFunc("/products/", h.productByID)
-	return mux
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery())
+	router.GET("/health", h.health)
+	router.GET("/metrics", h.metrics)
+	router.POST("/products", h.createProduct)
+	router.GET("/products", h.listProducts)
+	router.GET("/products/:id", h.getProduct)
+	router.PATCH("/products/:id/stock", h.updateStock)
+	router.POST("/products/:id/images", h.addImage)
+	return router
 }
 
-func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "product"})
+func (h *Handler) health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "product"})
 }
 
-func (h *Handler) products(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createProduct(w, r)
-	case http.MethodGet:
-		h.listProducts(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+func (h *Handler) metrics(c *gin.Context) {
+	c.String(http.StatusOK, "kazakhexpress_service_up{service=\"product\"} 1\n")
 }
 
-func (h *Handler) productByID(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/products/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusNotFound, "product not found")
-		return
-	}
-
-	id := parts[0]
-	if len(parts) == 1 && r.Method == http.MethodGet {
-		h.getProduct(w, r, id)
-		return
-	}
-
-	if len(parts) == 2 && parts[1] == "stock" && r.Method == http.MethodPatch {
-		h.updateStock(w, r, id)
-		return
-	}
-
-	w.WriteHeader(http.StatusMethodNotAllowed)
-}
-
-func (h *Handler) createProduct(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createProduct(c *gin.Context) {
 	var input product.CreateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 		return
 	}
-
-	created, err := h.service.Create(r.Context(), input)
-	if err != nil {
-		handleServiceError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, created)
+	created, err := h.service.Create(c.Request.Context(), input)
+	writeResult(c, http.StatusCreated, created, err)
 }
 
-func (h *Handler) listProducts(w http.ResponseWriter, r *http.Request) {
-	list, err := h.service.List(r.Context())
-	if err != nil {
-		handleServiceError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, list)
+func (h *Handler) listProducts(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	list, err := h.service.List(c.Request.Context(), product.ListFilter{
+		Limit:  limit,
+		Offset: offset,
+		Query:  c.Query("q"),
+	})
+	writeResult(c, http.StatusOK, list, err)
 }
 
-func (h *Handler) getProduct(w http.ResponseWriter, r *http.Request, id string) {
-	found, err := h.service.GetByID(r.Context(), id)
-	if err != nil {
-		handleServiceError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, found)
+func (h *Handler) getProduct(c *gin.Context) {
+	found, err := h.service.GetByID(c.Request.Context(), c.Param("id"))
+	writeResult(c, http.StatusOK, found, err)
 }
 
-func (h *Handler) updateStock(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) updateStock(c *gin.Context) {
 	var input product.UpdateStockInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 		return
 	}
+	updated, err := h.service.UpdateStock(c.Request.Context(), c.Param("id"), input.Stock)
+	writeResult(c, http.StatusOK, updated, err)
+}
 
-	updated, err := h.service.UpdateStock(r.Context(), id, input.Stock)
+func (h *Handler) addImage(c *gin.Context) {
+	file, err := c.FormFile("image")
 	if err != nil {
-		handleServiceError(w, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "image form file is required"})
 		return
 	}
-
-	writeJSON(w, http.StatusOK, updated)
-}
-
-func handleServiceError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, product.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, product.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	default:
-		writeError(w, http.StatusInternalServerError, "internal server error")
+	opened, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot open image"})
+		return
 	}
+	defer opened.Close()
+	content, err := io.ReadAll(io.LimitReader(opened, 10<<20))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read image"})
+		return
+	}
+	image, err := h.service.AddImage(c.Request.Context(), product.ImageInput{
+		ProductID:   c.Param("id"),
+		Filename:    file.Filename,
+		ContentType: file.Header.Get("Content-Type"),
+		Content:     content,
+	})
+	writeResult(c, http.StatusCreated, image, err)
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func writeResult(c *gin.Context, status int, value any, err error) {
+	if err != nil {
+		switch {
+		case errors.Is(err, product.ErrInvalidInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, product.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(status, value)
 }

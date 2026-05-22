@@ -9,11 +9,12 @@ import (
 	"kazakhexpress/user-service/internal/email"
 	grpcapi "kazakhexpress/user-service/internal/grpc"
 	httpapi "kazakhexpress/user-service/internal/http"
-	"kazakhexpress/user-service/internal/rabbitmq"
+	"kazakhexpress/user-service/internal/messaging"
 	redisclient "kazakhexpress/user-service/internal/redis"
 	"kazakhexpress/user-service/internal/user"
 
-	userv1 "github.com/russ315/kazakhexpress-protos/kazakhexpress/user/v1"
+	userv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/user/v1"
+	"github.com/nats-io/nats.go"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -33,7 +34,7 @@ func main() {
 	dbURL := getEnv("DATABASE_URL", "postgresql://postgres:Ruslan2006%40@localhost:5432/kazakhexpress_users?sslmode=disable")
 	jwtSecret := getEnv("JWT_SECRET", "your-secret-key-change-in-production")
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
-	rabbitURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	natsURL := getEnv("NATS_URL", nats.DefaultURL)
 
 	repo, err := user.NewPostgresRepository(dbURL)
 	if err != nil {
@@ -41,15 +42,21 @@ func main() {
 	}
 	defer repo.Close()
 
-	smtpEmailService := email.NewSMTPEmailService()
+	smtpEmailService, err := email.NewGRPCEmailService(getEnv("SMTP_GRPC_ADDR", "localhost:9094"))
+	if err != nil {
+		log.Printf("Warning: SMTP service unavailable: %v", err)
+	}
+	if smtpEmailService != nil {
+		defer smtpEmailService.Close()
+	}
 
 	var eventSvc user.EventService
-	rmqPublisher, err := rabbitmq.NewPublisher(rabbitURL)
+	natsConn, err := nats.Connect(natsURL)
 	if err != nil {
-		log.Printf("Warning: RabbitMQ not available: %v", err)
+		log.Printf("Warning: NATS not available: %v", err)
 	} else {
-		eventSvc = user.NewRabbitMQEventAdapter(rmqPublisher)
-		defer rmqPublisher.Close()
+		eventSvc = user.NewNATSEventAdapter(messaging.NewPublisher(natsConn))
+		defer natsConn.Close()
 	}
 
 	var cacheSvc user.CacheService

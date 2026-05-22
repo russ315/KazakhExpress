@@ -2,7 +2,7 @@ name: service-ci
 
 on:
   push:
-    branches: [main, feat-payment_service, "codex/**"]
+    branches: [main, "feat/**", "fix/**", "chore/**"]
   pull_request:
 
 jobs:
@@ -13,7 +13,11 @@ jobs:
       matrix:
         service:
           - api-gateway
+          - user-service
+          - order-service
+          - product-service
           - payment-service
+          - review-service
           - smtp-service
     steps:
       - uses: actions/checkout@v4
@@ -52,4 +56,8 @@ jobs:
 
       - name: Build service images
         working-directory: KazakhExpress
-        run: docker compose build api-gateway payment-service smtp-service
+        run: docker compose build api-gateway user-service order-service product-service payment-service review-service smtp-service
+
+      - name: Validate compose config
+        working-directory: KazakhExpress
+        run: docker compose config --quiet

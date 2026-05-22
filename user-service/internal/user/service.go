@@ -27,11 +27,11 @@ type Service interface {
 }
 
 type UserService struct {
-	repo        Repository
-	jwtSecret   string
-	emailSvc    EmailService
-	eventSvc    EventService
-	cacheSvc    CacheService
+	repo         Repository
+	jwtSecret    string
+	emailSvc     EmailService
+	eventSvc     EventService
+	cacheSvc     CacheService
 	rateLimitSvc RateLimitService
 }
 
@@ -58,12 +58,12 @@ type RateLimitService interface {
 
 func NewService(repo Repository, jwtSecret string, emailSvc EmailService, eventSvc EventService, cacheSvc CacheService, rateLimitSvc RateLimitService) *UserService {
 	return &UserService{
-		repo:          repo,
-		jwtSecret:     jwtSecret,
-		emailSvc:      emailSvc,
-		eventSvc:      eventSvc,
-		cacheSvc:      cacheSvc,
-		rateLimitSvc:  rateLimitSvc,
+		repo:         repo,
+		jwtSecret:    jwtSecret,
+		emailSvc:     emailSvc,
+		eventSvc:     eventSvc,
+		cacheSvc:     cacheSvc,
+		rateLimitSvc: rateLimitSvc,
 	}
 }
 

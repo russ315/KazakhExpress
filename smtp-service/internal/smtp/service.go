@@ -3,6 +3,7 @@ package smtp
 import (
 	"context"
 	"fmt"
+	"log"
 	netsmtp "net/smtp"
 )
 
@@ -27,6 +28,7 @@ func (s *Service) SendEmail(ctx context.Context, to string, subject string, body
 		return fmt.Errorf("email to, subject and body are required")
 	}
 	if s.config.Username == "" || s.config.Password == "" {
+		log.Printf("smtp dry-run to=%s subject=%q", to, subject)
 		return nil
 	}
 	select {
@@ -42,6 +44,17 @@ func (s *Service) SendEmail(ctx context.Context, to string, subject string, body
 		return fmt.Errorf("send smtp email: %w", err)
 	}
 	return nil
+}
+
+func WelcomeSubject() string {
+	return "Welcome to KazakhExpress"
+}
+
+func WelcomeBody(firstName string) string {
+	if firstName == "" {
+		firstName = "there"
+	}
+	return fmt.Sprintf("Hi %s, welcome to KazakhExpress.", firstName)
 }
 
 func PaymentReceiptSubject() string {

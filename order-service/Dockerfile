@@ -1,7 +1,11 @@
 FROM golang:1.25-alpine AS build
 
-WORKDIR /src/order-service
-COPY order-service ./
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+
+WORKDIR /src
+COPY kazakhexpress-proto ./kazakhexpress-proto
+COPY KazakhExpress/order-service ./KazakhExpress/order-service
+WORKDIR /src/KazakhExpress/order-service
 RUN go mod download
 RUN go build -o /out/order-service ./cmd/order-service
 

@@ -1,59 +1,117 @@
-# KazakhExpress Payment Stack
+# KazakhExpress Backend
 
-This branch contains the payment-focused microservice stack:
+Microservice backend with one public Gin API Gateway and internal gRPC services.
+
+## Services
 
 ```txt
-api-gateway      Gin HTTP gateway, /payment routes, gRPC client to payment-service
-payment-service  payment domain, PostgreSQL, Redis idempotency, RabbitMQ events
-smtp-service     shared SMTP microservice called through gRPC
-infra            Grafana provisioning
+api-gateway      public HTTP API on :8080
+user-service     auth, profile, JWT, welcome email
+product-service  products, stock, MinIO image storage
+order-service    orders, status flow, payment event consumer
+payment-service  idempotent payments, refunds, SMTP receipts
+review-service   product reviews and cached rating
+smtp-service     shared SMTP sender used by other services
 ```
 
-The protobuf source of truth lives in a separate repository:
+Shared protobuf contracts live in:
 
 ```txt
 github.com/maqsatto/kazakhexpress-proto
 ```
 
-For local development, the Go modules use a `replace` directive to a sibling checkout:
+Local modules use:
 
 ```txt
-../kazakhexpress-proto
+replace github.com/maqsatto/kazakhexpress-proto => ../../kazakhexpress-proto
 ```
 
-## Run Everything
+Keep the proto repository checked out next to this repository:
 
-From this repository:
+```txt
+Projects/
+  KazakhExpress/
+  kazakhexpress-proto/
+```
+
+## Run
 
 ```powershell
 docker compose up --build
 ```
 
-Services:
+Main URLs:
 
 ```txt
-API Gateway    http://localhost:8080
-Payment API    http://localhost:8080/payment
-RabbitMQ UI    http://localhost:15672
-Grafana        http://localhost:3000
-PostgreSQL 17  localhost:5432
-Redis          localhost:6379
+API Gateway  http://localhost:8080
+Grafana      http://localhost:3000  admin/admin
+NATS monitor http://localhost:8222
+MinIO        http://localhost:9001  minioadmin/minioadmin
+PostgreSQL   localhost:5432
+Redis        localhost:6379
 ```
 
-`payment-service` and `smtp-service` are internal Docker-network services. Do not call them directly from the host; use API Gateway.
-
-## Verify
+Business services are internal. Use the gateway, for example:
 
 ```powershell
+curl http://localhost:8080/health
+curl http://localhost:8080/payment/health
+curl http://localhost:8080/products
+```
+
+## Payment Smoke Flow
+
+```powershell
+$body = @{
+  order_id = "ord-demo"
+  customer_id = "usr-demo"
+  customer_email = "dev@example.com"
+  amount_kzt = 15000
+  method = "card"
+  idempotency_key = "demo-key-1"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/payment -ContentType application/json -Body $body
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/payment -ContentType application/json -Body $body
+```
+
+The second request returns the same payment through Redis idempotency. If SMTP credentials are empty, the SMTP service logs a dry-run email.
+
+## SMTP
+
+Set these when real email is needed:
+
+```powershell
+$env:SMTP_USERNAME="your@gmail.com"
+$env:SMTP_PASSWORD="your-app-password"
+$env:SMTP_FROM="noreply@kazakhexpress.kz"
+docker compose up --build
+```
+
+## Tests
+
+Run all modules:
+
+```powershell
+foreach ($svc in "api-gateway","user-service","order-service","product-service","payment-service","review-service","smtp-service") {
+  Push-Location $svc
+  go test ./...
+  go vet ./...
+  Pop-Location
+}
+```
+
+Proto repo:
+
+```powershell
+Push-Location ..\kazakhexpress-proto
+buf lint
+buf generate
 go test ./...
-go vet ./...
+git diff --exit-code
+Pop-Location
 ```
 
-Run those commands inside each Go module: `api-gateway`, `payment-service`, and `smtp-service`.
+## Observability
 
-## Smoke Test
-
-```powershell
-Invoke-RestMethod http://localhost:8080/health
-Invoke-RestMethod http://localhost:8080/payment/health
-```
+Grafana is provisioned with Prometheus, Loki, and Tempo datasources. Current services expose `/metrics` where HTTP is enabled, and all service logs are structured enough for local debugging. Tracing pipeline is ready through the OTel Collector and Tempo.

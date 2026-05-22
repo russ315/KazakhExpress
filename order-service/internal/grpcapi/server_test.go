@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"kazakhexpress/order-service/internal/order"
+
+	orderv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/order/v1"
 )
 
 type grpcTestRepo struct {
@@ -55,25 +57,25 @@ func TestGRPCCreateAndGetOrder(t *testing.T) {
 	server := newTestServer()
 	ctx := context.Background()
 
-	created, err := server.CreateOrder(ctx, &order.CreateInput{
-		CustomerID: "customer-1",
-		Items: []order.Item{{
-			ProductID: "product-1",
+	created, err := server.CreateOrder(ctx, &orderv1.CreateOrderRequest{
+		CustomerId: "customer-1",
+		Items: []*orderv1.OrderItem{{
+			ProductId: "product-1",
 			Name:      "Shapan",
 			Quantity:  1,
-			PriceKZT:  1500,
+			PriceKzt:  1500,
 		}},
 	})
 	if err != nil {
 		t.Fatalf("CreateOrder() error = %v", err)
 	}
 
-	found, err := server.GetOrder(ctx, &GetOrderRequest{OrderID: created.ID})
+	found, err := server.GetOrder(ctx, &orderv1.GetOrderRequest{OrderId: created.Id})
 	if err != nil {
 		t.Fatalf("GetOrder() error = %v", err)
 	}
-	if found.ID != created.ID {
-		t.Fatalf("order id = %s, want %s", found.ID, created.ID)
+	if found.Id != created.Id {
+		t.Fatalf("order id = %s, want %s", found.Id, created.Id)
 	}
 }
 
@@ -81,14 +83,14 @@ func TestGRPCListOrders(t *testing.T) {
 	server := newTestServer()
 	ctx := context.Background()
 
-	if _, err := server.CreateOrder(ctx, &order.CreateInput{
-		CustomerID: "customer-1",
-		Items:      []order.Item{{ProductID: "p1", Name: "x", Quantity: 1, PriceKZT: 100}},
+	if _, err := server.CreateOrder(ctx, &orderv1.CreateOrderRequest{
+		CustomerId: "customer-1",
+		Items:      []*orderv1.OrderItem{{ProductId: "p1", Name: "x", Quantity: 1, PriceKzt: 100}},
 	}); err != nil {
 		t.Fatalf("CreateOrder() error = %v", err)
 	}
 
-	resp, err := server.ListOrders(ctx, &ListOrdersRequest{})
+	resp, err := server.ListOrders(ctx, &orderv1.ListOrdersRequest{})
 	if err != nil {
 		t.Fatalf("ListOrders() error = %v", err)
 	}
@@ -101,40 +103,40 @@ func TestGRPCUpdateAndCancelOrder(t *testing.T) {
 	server := newTestServer()
 	ctx := context.Background()
 
-	created, err := server.CreateOrder(ctx, &order.CreateInput{
-		CustomerID: "customer-1",
-		Items:      []order.Item{{ProductID: "p1", Name: "x", Quantity: 1, PriceKZT: 100}},
+	created, err := server.CreateOrder(ctx, &orderv1.CreateOrderRequest{
+		CustomerId: "customer-1",
+		Items:      []*orderv1.OrderItem{{ProductId: "p1", Name: "x", Quantity: 1, PriceKzt: 100}},
 	})
 	if err != nil {
 		t.Fatalf("CreateOrder() error = %v", err)
 	}
 
-	updated, err := server.UpdateOrderStatus(ctx, &UpdateOrderStatusRequest{
-		OrderID: created.ID,
-		Status:  order.StatusShipped,
+	updated, err := server.UpdateOrderStatus(ctx, &orderv1.UpdateOrderStatusRequest{
+		OrderId: created.Id,
+		Status:  orderv1.OrderStatus_ORDER_STATUS_SHIPPED,
 	})
 	if err != nil {
 		t.Fatalf("UpdateOrderStatus() error = %v", err)
 	}
-	if updated.Status != order.StatusShipped {
-		t.Fatalf("status = %s, want %s", updated.Status, order.StatusShipped)
+	if updated.Status != orderv1.OrderStatus_ORDER_STATUS_SHIPPED {
+		t.Fatalf("status = %s, want %s", updated.Status, orderv1.OrderStatus_ORDER_STATUS_SHIPPED)
 	}
 
-	cancelled, err := server.CancelOrder(ctx, &CancelOrderRequest{
-		OrderID: created.ID,
+	cancelled, err := server.CancelOrder(ctx, &orderv1.CancelOrderRequest{
+		OrderId: created.Id,
 		Reason:  "grpc cancel",
 	})
 	if err != nil {
 		t.Fatalf("CancelOrder() error = %v", err)
 	}
-	if cancelled.Status != order.StatusCanceled {
-		t.Fatalf("status = %s, want %s", cancelled.Status, order.StatusCanceled)
+	if cancelled.Status != orderv1.OrderStatus_ORDER_STATUS_CANCELED {
+		t.Fatalf("status = %s, want %s", cancelled.Status, orderv1.OrderStatus_ORDER_STATUS_CANCELED)
 	}
 }
 
 func TestGRPCGetOrderNotFound(t *testing.T) {
 	server := newTestServer()
-	_, err := server.GetOrder(context.Background(), &GetOrderRequest{OrderID: "missing"})
+	_, err := server.GetOrder(context.Background(), &orderv1.GetOrderRequest{OrderId: "missing"})
 	if !errors.Is(err, order.ErrNotFound) {
 		t.Fatalf("GetOrder() error = %v, want %v", err, order.ErrNotFound)
 	}
