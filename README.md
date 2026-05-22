@@ -59,6 +59,18 @@ curl http://localhost:8080/payment/health
 curl http://localhost:8080/products
 ```
 
+Seed catalog products with image uploads to MinIO and demo reviews:
+
+```powershell
+docker compose --profile seed run --rm seed-data
+```
+
+OpenAPI contract:
+
+```txt
+api-gateway/openapi.yaml
+```
+
 ## Payment Smoke Flow
 
 ```powershell
@@ -114,4 +126,11 @@ Pop-Location
 
 ## Observability
 
-Grafana is provisioned with Prometheus, Loki, and Tempo datasources. Current services expose `/metrics` where HTTP is enabled, and all service logs are structured enough for local debugging. Tracing pipeline is ready through the OTel Collector and Tempo.
+Grafana is provisioned with Prometheus, Loki, Tempo, and ready dashboards:
+
+```txt
+KazakhExpress Backend Overview
+KazakhExpress Payment Flow
+```
+
+Current services expose `/metrics` where HTTP is enabled, and all service logs are structured enough for local debugging. Tracing pipeline is ready through the OTel Collector and Tempo.

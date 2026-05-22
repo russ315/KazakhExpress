@@ -40,6 +40,7 @@ func main() {
 		getEnv("MINIO_SECRET_KEY", "minioadmin"),
 		getEnv("MINIO_BUCKET", "products"),
 		getEnv("MINIO_USE_SSL", "false") == "true",
+		getEnv("MINIO_PUBLIC_ENDPOINT", "localhost:9000"),
 	)
 	if err != nil {
 		log.Fatal(err)

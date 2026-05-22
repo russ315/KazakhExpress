@@ -4,7 +4,7 @@ datasources:
   - name: Payment PostgreSQL 17
     type: postgres
     access: proxy
-    url: payment-postgres:5432
+    url: postgres:5432
     user: postgres
     secureJsonData:
       password: postgres

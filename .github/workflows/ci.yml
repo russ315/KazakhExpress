@@ -28,6 +28,7 @@ jobs:
         with:
           repository: maqsatto/kazakhexpress-proto
           path: kazakhexpress-proto
+          ref: ${{ github.ref_name == 'feat/maqsat-commits' && 'feat/maqsat-commits' || 'main' }}
 
       - uses: actions/setup-go@v5
         with:
@@ -53,10 +54,23 @@ jobs:
         with:
           repository: maqsatto/kazakhexpress-proto
           path: kazakhexpress-proto
+          ref: ${{ github.ref_name == 'feat/maqsat-commits' && 'feat/maqsat-commits' || 'main' }}
 
       - name: Build service images
         working-directory: KazakhExpress
         run: docker compose build api-gateway user-service order-service product-service payment-service review-service smtp-service
+
+      - name: Validate OpenAPI and dashboards
+        working-directory: KazakhExpress
+        run: |
+          ruby -e "require 'yaml'; YAML.load_file('api-gateway/openapi.yaml')"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path('infra/grafana/dashboards').glob('*.json'):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'validated {path}')
+          PY
 
       - name: Validate compose config
         working-directory: KazakhExpress
