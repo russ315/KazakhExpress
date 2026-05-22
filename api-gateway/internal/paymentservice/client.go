@@ -21,7 +21,7 @@ type Client interface {
 }
 
 func (c *GRPCClient) Health(ctx context.Context) error {
-	_, err := c.client.ListPayments(ctx, &paymentv1.ListPaymentsRequest{})
+	_, err := c.client.HealthCheck(ctx, &paymentv1.HealthCheckRequest{})
 	return err
 }
 

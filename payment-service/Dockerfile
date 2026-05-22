@@ -1,5 +1,7 @@
 FROM golang:1.25-alpine AS build
 
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+
 WORKDIR /src
 COPY kazakhexpress-proto ./kazakhexpress-proto
 COPY KazakhExpress/payment-service ./KazakhExpress/payment-service

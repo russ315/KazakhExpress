@@ -22,12 +22,19 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", h.handleHealth)
+	mux.HandleFunc("/metrics", h.handleMetrics)
 	mux.HandleFunc("/auth/register", h.handleRegister)
 	mux.HandleFunc("/auth/login", h.handleLogin)
 	mux.HandleFunc("/users/me", h.withAuth(h.handleProfile))
 	mux.HandleFunc("/users/", h.handleGetUserByID)
 
 	return mux
+}
+
+func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("kazakhexpress_service_up{service=\"user\"} 1\n"))
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

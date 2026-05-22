@@ -2,7 +2,7 @@ name: service-ci
 
 on:
   push:
-    branches: [main, feat-payment_service, "codex/**"]
+    branches: [main, "feat/**", "fix/**", "chore/**"]
   pull_request:
 
 jobs:
@@ -13,7 +13,11 @@ jobs:
       matrix:
         service:
           - api-gateway
+          - user-service
+          - order-service
+          - product-service
           - payment-service
+          - review-service
           - smtp-service
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +28,7 @@ jobs:
         with:
           repository: maqsatto/kazakhexpress-proto
           path: kazakhexpress-proto
+          ref: ${{ github.ref_name == 'feat/maqsat-commits' && 'feat/maqsat-commits' || 'main' }}
 
       - uses: actions/setup-go@v5
         with:
@@ -37,9 +42,36 @@ jobs:
         working-directory: KazakhExpress/${{ matrix.service }}
         run: go vet ./...
 
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: KazakhExpress
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: KazakhExpress/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: KazakhExpress/frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: KazakhExpress/frontend
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: KazakhExpress/frontend
+        run: npm run build
+
   docker-build:
     runs-on: ubuntu-latest
-    needs: go-test
+    needs:
+      - go-test
+      - frontend-test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +81,46 @@ jobs:
         with:
           repository: maqsatto/kazakhexpress-proto
           path: kazakhexpress-proto
+          ref: ${{ github.ref_name == 'feat/maqsat-commits' && 'feat/maqsat-commits' || 'main' }}
 
       - name: Build service images
         working-directory: KazakhExpress
-        run: docker compose build api-gateway payment-service smtp-service
+        run: docker compose build api-gateway user-service order-service product-service payment-service review-service smtp-service frontend
+
+      - name: Validate OpenAPI and dashboards
+        working-directory: KazakhExpress
+        run: |
+          ruby -e "require 'yaml'; YAML.load_file('api-gateway/openapi.yaml')"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path('infra/grafana/dashboards').glob('*.json'):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'validated {path}')
+          PY
+
+      - name: Validate compose config
+        working-directory: KazakhExpress
+        run: docker compose config --quiet
+
+      - name: Start backend stack
+        working-directory: KazakhExpress
+        run: docker compose up -d --remove-orphans
+
+      - name: Seed demo data
+        working-directory: KazakhExpress
+        run: docker compose --profile seed run --rm seed-data
+
+      - name: Run gateway smoke tests
+        working-directory: KazakhExpress
+        run: bash scripts/smoke.sh
+
+      - name: Show container logs on failure
+        if: failure()
+        working-directory: KazakhExpress
+        run: docker compose logs --tail=200
+
+      - name: Stop backend stack
+        if: always()
+        working-directory: KazakhExpress
+        run: docker compose down -v --remove-orphans

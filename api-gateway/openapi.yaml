@@ -1,0 +1,731 @@
+openapi: 3.0.3
+info:
+  title: KazakhExpress API Gateway
+  version: 1.0.0
+  description: Public HTTP API exposed by the Gin API Gateway. Backend services are internal gRPC services.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Health
+  - name: Auth
+  - name: Users
+  - name: Products
+  - name: Orders
+  - name: Payment
+  - name: Reviews
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Gateway health check
+      responses:
+        "200":
+          description: Gateway is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Created user and tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Auth tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: New tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout and blacklist token
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Logout result
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user by X-User-ID
+      parameters:
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    put:
+      tags: [Users]
+      summary: Update current user by X-User-ID
+      parameters:
+        - $ref: "#/components/parameters/UserHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by id
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /products/health:
+    get:
+      tags: [Products]
+      summary: Product service health
+      responses:
+        "200":
+          description: Product service is ready
+  /products:
+    get:
+      tags: [Products]
+      summary: List products
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+    post:
+      tags: [Products]
+      summary: Create product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /products/{productId}:
+    get:
+      tags: [Products]
+      summary: Get product
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: Product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /products/{productId}/stock:
+    patch:
+      tags: [Products]
+      summary: Update product stock
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stock]
+              properties:
+                stock:
+                  type: integer
+      responses:
+        "200":
+          description: Updated product
+  /products/{productId}/images:
+    post:
+      tags: [Products]
+      summary: Upload product image to MinIO
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Stored image metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImage"
+  /orders/health:
+    get:
+      tags: [Orders]
+      summary: Order service health
+      responses:
+        "200":
+          description: Order service is ready
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List orders
+      responses:
+        "200":
+          description: Order list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+    post:
+      tags: [Orders]
+      summary: Create order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: Created order
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Get order
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+  /orders/{id}/status:
+    patch:
+      tags: [Orders]
+      summary: Update order status
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+      responses:
+        "200":
+          description: Updated order
+  /orders/{id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Cancel order
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Cancelled order
+  /payment/health:
+    get:
+      tags: [Payment]
+      summary: Payment service health
+      responses:
+        "200":
+          description: Payment service is ready
+  /payment:
+    get:
+      tags: [Payment]
+      summary: List payments
+      parameters:
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payment"
+    post:
+      tags: [Payment]
+      summary: Create idempotent payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequest"
+      responses:
+        "201":
+          description: Created payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /payment/{id}:
+    get:
+      tags: [Payment]
+      summary: Get payment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Payment
+  /payment/order/{orderId}:
+    get:
+      tags: [Payment]
+      summary: Get payment by order id
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payment
+  /payment/{id}/refund:
+    post:
+      tags: [Payment]
+      summary: Refund payment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount_kzt:
+                  type: integer
+                  format: int64
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Refunded payment
+  /payment/{id}/confirm:
+    post:
+      tags: [Payment]
+      summary: Confirm payment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Confirmed payment
+  /payment/{id}/cancel:
+    post:
+      tags: [Payment]
+      summary: Cancel payment
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Cancelled payment
+  /reviews/health:
+    get:
+      tags: [Reviews]
+      summary: Review service health
+      responses:
+        "200":
+          description: Review service is ready
+  /products/{productId}/reviews:
+    get:
+      tags: [Reviews]
+      summary: List product reviews
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: Reviews
+    post:
+      tags: [Reviews]
+      summary: Create product review
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReviewRequest"
+      responses:
+        "201":
+          description: Created review
+  /products/{productId}/rating:
+    get:
+      tags: [Reviews]
+      summary: Get cached product rating
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: Product rating
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rating"
+  /reviews/{id}:
+    get:
+      tags: [Reviews]
+      summary: Get review
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Review
+    put:
+      tags: [Reviews]
+      summary: Update review
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReviewRequest"
+      responses:
+        "200":
+          description: Updated review
+    delete:
+      tags: [Reviews]
+      summary: Delete review
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Deleted review
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    ProductID:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+    UserHeader:
+      name: X-User-ID
+      in: header
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        service:
+          type: string
+        status:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        name:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+    CreateProductRequest:
+      type: object
+      required: [name, price_kzt, stock]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        price_kzt:
+          type: integer
+          format: int64
+        stock:
+          type: integer
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price_kzt:
+          type: integer
+          format: int64
+        stock:
+          type: integer
+        image_url:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    ProductImage:
+      type: object
+      properties:
+        id:
+          type: string
+        product_id:
+          type: string
+        object_name:
+          type: string
+        url:
+          type: string
+        created_at:
+          type: string
+    CreateOrderRequest:
+      type: object
+      required: [customer_id, items]
+      properties:
+        customer_id:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            required: [product_id, quantity, price_kzt]
+            properties:
+              product_id:
+                type: string
+              quantity:
+                type: integer
+              price_kzt:
+                type: integer
+                format: int64
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        status:
+          type: string
+        total_kzt:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            type: object
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    CreatePaymentRequest:
+      type: object
+      required: [order_id, customer_id, amount_kzt, method, idempotency_key]
+      properties:
+        order_id:
+          type: string
+        customer_id:
+          type: string
+        customer_email:
+          type: string
+          format: email
+        amount_kzt:
+          type: integer
+          format: int64
+        method:
+          type: string
+          example: card
+        idempotency_key:
+          type: string
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+        order_id:
+          type: string
+        customer_id:
+          type: string
+        amount_kzt:
+          type: integer
+          format: int64
+        method:
+          type: string
+        status:
+          type: string
+        idempotency_key:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    CreateReviewRequest:
+      type: object
+      required: [customer_id, rating]
+      properties:
+        customer_id:
+          type: string
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+    UpdateReviewRequest:
+      type: object
+      required: [rating]
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+    Rating:
+      type: object
+      properties:
+        product_id:
+          type: string
+        average_rating:
+          type: number
+          format: double
+        review_count:
+          type: integer

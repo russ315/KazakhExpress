@@ -20,6 +20,7 @@ func NewHandler(service *order.Service) *Handler {
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.health)
+	mux.HandleFunc("/metrics", h.metrics)
 	mux.HandleFunc("/orders", h.orders)
 	mux.HandleFunc("/orders/", h.orderByID)
 	return mux
@@ -27,6 +28,11 @@ func (h *Handler) Routes() http.Handler {
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "order"})
+}
+
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	_, _ = w.Write([]byte("kazakhexpress_service_up{service=\"order\"} 1\n"))
 }
 
 func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {

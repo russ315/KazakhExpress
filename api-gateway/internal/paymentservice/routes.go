@@ -26,7 +26,7 @@ func RegisterRoutes(router gin.IRouter, client Client) {
 }
 
 func (h *Handler) health(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := h.client.Health(ctx); err != nil {

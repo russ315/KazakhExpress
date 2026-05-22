@@ -28,12 +28,12 @@ func domainToProtoUser(u *user.User) *pb.User {
 		LastName:  u.LastName,
 		Phone:     u.Phone,
 		Address:   u.Address,
-		CreatedAt: u.CreatedAt.Unix(),
-		UpdatedAt: u.UpdatedAt.Unix(),
+		CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: u.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
-func (h *UserGRPCHandler) RegisterUser(ctx context.Context, req *pb.RegisterRequest) (*pb.AuthResponse, error) {
+func (h *UserGRPCHandler) RegisterUser(ctx context.Context, req *pb.RegisterUserRequest) (*pb.AuthResponse, error) {
 	input := &user.RegisterInput{
 		Email:     req.GetEmail(),
 		Password:  req.GetPassword(),
@@ -55,7 +55,7 @@ func (h *UserGRPCHandler) RegisterUser(ctx context.Context, req *pb.RegisterRequ
 	}, nil
 }
 
-func (h *UserGRPCHandler) LoginUser(ctx context.Context, req *pb.LoginRequest) (*pb.AuthResponse, error) {
+func (h *UserGRPCHandler) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.AuthResponse, error) {
 	input := &user.LoginInput{
 		Email:    req.GetEmail(),
 		Password: req.GetPassword(),
@@ -86,7 +86,7 @@ func (h *UserGRPCHandler) GetUserByID(ctx context.Context, req *pb.GetUserByIDRe
 	return h.GetUser(ctx, &pb.GetUserRequest{UserId: req.GetUserId()})
 }
 
-func (h *UserGRPCHandler) UpdateUserProfile(ctx context.Context, req *pb.UpdateProfileRequest) (*pb.UserResponse, error) {
+func (h *UserGRPCHandler) UpdateUserProfile(ctx context.Context, req *pb.UpdateUserProfileRequest) (*pb.UserResponse, error) {
 	input := &user.UpdateProfileInput{
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
@@ -135,30 +135,8 @@ func (h *UserGRPCHandler) Logout(ctx context.Context, req *pb.LogoutRequest) (*p
 	return &pb.Empty{}, nil
 }
 
-func (h *UserGRPCHandler) ForgotPassword(ctx context.Context, req *pb.ForgotPasswordRequest) (*pb.Empty, error) {
-	input := &user.ForgotPasswordInput{Email: req.GetEmail()}
-	if err := h.svc.ForgotPassword(input); err != nil {
-		return nil, status.Errorf(codes.Internal, "forgot password failed: %v", err)
-	}
-
-	return &pb.Empty{}, nil
-}
-
-func (h *UserGRPCHandler) ResetPassword(ctx context.Context, req *pb.ResetPasswordRequest) (*pb.Empty, error) {
-	input := &user.ResetPasswordInput{
-		Token:       req.GetToken(),
-		NewPassword: req.GetNewPassword(),
-	}
-
-	if err := h.svc.ResetPassword(input); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "reset password failed: %v", err)
-	}
-
-	return &pb.Empty{}, nil
-}
-
-func (h *UserGRPCHandler) HealthCheck(ctx context.Context, _ *pb.Empty) (*pb.HealthResponse, error) {
-	return &pb.HealthResponse{Status: "ok"}, nil
+func (h *UserGRPCHandler) HealthCheck(ctx context.Context, _ *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error) {
+	return &pb.HealthCheckResponse{Status: "ok"}, nil
 }
 
 func UnixToTime(ts int64) time.Time {

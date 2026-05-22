@@ -4,33 +4,29 @@ import (
 	"context"
 	"fmt"
 
-	rmq "kazakhexpress/user-service/internal/rabbitmq"
+	"kazakhexpress/user-service/internal/messaging"
 )
 
-type RabbitMQEventAdapter struct {
-	publisher *rmq.Publisher
+type NATSEventAdapter struct {
+	publisher *messaging.Publisher
 }
 
-func NewRabbitMQEventAdapter(publisher *rmq.Publisher) *RabbitMQEventAdapter {
-	return &RabbitMQEventAdapter{publisher: publisher}
+func NewNATSEventAdapter(publisher *messaging.Publisher) *NATSEventAdapter {
+	return &NATSEventAdapter{publisher: publisher}
 }
 
-func (a *RabbitMQEventAdapter) PublishUserEvent(ctx context.Context, event interface{}) error {
+func (a *NATSEventAdapter) PublishUserEvent(ctx context.Context, event interface{}) error {
 	userEvent, ok := event.(UserEvent)
 	if !ok {
 		return fmt.Errorf("expected UserEvent, got %T", event)
 	}
 
-	return a.publisher.PublishUserEvent(ctx, rmq.UserEvent{
+	return a.publisher.PublishUserEvent(ctx, messaging.UserEvent{
 		UserID:    userEvent.UserID,
 		Email:     userEvent.Email,
 		FirstName: userEvent.FirstName,
 		LastName:  userEvent.LastName,
-		Event:     rmq.EventType(userEvent.Event),
+		Event:     messaging.EventType(userEvent.Event),
 		Timestamp: userEvent.Timestamp,
 	})
-}
-
-func (a *RabbitMQEventAdapter) Close() error {
-	return a.publisher.Close()
 }

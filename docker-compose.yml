@@ -10,17 +10,39 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./order-service/migrations/001_create_orders.sql:/docker-entrypoint-initdb.d/000_create_orders.sql:ro
-      - ./payment-service/migrations/001_create_payments.sql:/docker-entrypoint-initdb.d/001_create_payments.sql:ro
-      - ./payment-service/migrations/002_extend_payments.sql:/docker-entrypoint-initdb.d/002_extend_payments.sql:ro
-      - ./user-service/migrations/001_create_users.sql:/docker-entrypoint-initdb.d/003_create_users.sql:ro
-      - ./user-service/migrations/002_create_refresh_tokens.sql:/docker-entrypoint-initdb.d/004_create_refresh_tokens.sql:ro
-      - ./user-service/migrations/003_create_token_blacklist.sql:/docker-entrypoint-initdb.d/005_create_token_blacklist.sql:ro
+      - ./user-service/migrations/001_create_users.sql:/docker-entrypoint-initdb.d/000_user_001.sql:ro
+      - ./user-service/migrations/002_create_refresh_tokens.sql:/docker-entrypoint-initdb.d/001_user_002.sql:ro
+      - ./user-service/migrations/003_create_token_blacklist.sql:/docker-entrypoint-initdb.d/002_user_003.sql:ro
+      - ./order-service/migrations/001_create_orders.sql:/docker-entrypoint-initdb.d/010_order_001.sql:ro
+      - ./payment-service/migrations/001_create_payments.sql:/docker-entrypoint-initdb.d/020_payment_001.sql:ro
+      - ./payment-service/migrations/002_extend_payments.sql:/docker-entrypoint-initdb.d/021_payment_002.sql:ro
+      - ./product-service/migrations/001_create_products.sql:/docker-entrypoint-initdb.d/030_product_001.sql:ro
+      - ./review-service/migrations/001_create_reviews.sql:/docker-entrypoint-initdb.d/040_review_001.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d kazakhexpress"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+
+  migrate:
+    image: postgres:17
+    container_name: kazakhexpress-migrate
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+    volumes:
+      - ./user-service/migrations/001_create_users.sql:/migrations/000_user_001.sql:ro
+      - ./user-service/migrations/002_create_refresh_tokens.sql:/migrations/001_user_002.sql:ro
+      - ./user-service/migrations/003_create_token_blacklist.sql:/migrations/002_user_003.sql:ro
+      - ./order-service/migrations/001_create_orders.sql:/migrations/010_order_001.sql:ro
+      - ./payment-service/migrations/001_create_payments.sql:/migrations/020_payment_001.sql:ro
+      - ./payment-service/migrations/002_extend_payments.sql:/migrations/021_payment_002.sql:ro
+      - ./product-service/migrations/001_create_products.sql:/migrations/030_product_001.sql:ro
+      - ./review-service/migrations/001_create_reviews.sql:/migrations/040_review_001.sql:ro
+    command: >
+      sh -c "for file in /migrations/*.sql; do echo applying $$file; psql $$DATABASE_URL -v ON_ERROR_STOP=1 -f $$file; done"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   redis:
     image: redis:7
@@ -28,32 +50,33 @@ services:
     ports:
       - "6379:6379"
 
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: kazakhexpress-rabbitmq
+  nats:
+    image: nats:2.11-alpine
+    container_name: kazakhexpress-nats
+    command: ["-js", "-m", "8222"]
     ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      - "4222:4222"
+      - "8222:8222"
 
-  grafana:
-    image: grafana/grafana:11.2.0
-    container_name: kazakhexpress-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:latest
+    container_name: kazakhexpress-nats-exporter
+    command: ["-varz", "-connz", "-subz", "http://nats:8222"]
     depends_on:
-      postgres:
-        condition: service_healthy
+      - nats
+
+  minio:
+    image: minio/minio:latest
+    container_name: kazakhexpress-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
 
   smtp-service:
     build:
@@ -67,49 +90,8 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-noreply@kazakhexpress.kz}
-  payment-service:
-    build:
-      context: ..
-      dockerfile: KazakhExpress/payment-service/Dockerfile
-    container_name: kazakhexpress-payment-service
-    environment:
-      PAYMENT_GRPC_PORT: "9093"
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
-      REDIS_ADDR: redis:6379
-      MESSAGE_BROKER: rabbitmq
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      RABBITMQ_EXCHANGE: kazakhexpress.events
-      SMTP_GRPC_ADDR: smtp-service:9094
-      GIN_MODE: release
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      smtp-service:
-        condition: service_started
-
-  order-service:
-    build:
-      context: .
-      dockerfile: order-service/Dockerfile
-    container_name: kazakhexpress-order-service
-    environment:
-      ORDER_SERVICE_PORT: "8082"
-      ORDER_GRPC_PORT: "9092"
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
-      REDIS_ADDR: redis:6379
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      RABBITMQ_EXCHANGE: kazakhexpress.events
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-KazakhExpress <noreply@send.maqsatto.dev>}
 
   user-service:
     build:
@@ -118,17 +100,114 @@ services:
     container_name: kazakhexpress-user-service
     environment:
       USER_SERVICE_PORT: "8081"
-      USER_SERVICE_GRPC_PORT: "9095"
+      USER_SERVICE_GRPC_PORT: "50051"
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       REDIS_ADDR: redis:6379
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      NATS_URL: nats://nats:4222
+      SMTP_GRPC_ADDR: smtp-service:9094
     depends_on:
       postgres:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
+        condition: service_started
+      nats:
+        condition: service_started
+      smtp-service:
+        condition: service_started
+
+  order-service:
+    build:
+      context: ..
+      dockerfile: KazakhExpress/order-service/Dockerfile
+    container_name: kazakhexpress-order-service
+    environment:
+      ORDER_SERVICE_PORT: "8082"
+      ORDER_GRPC_PORT: "9092"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+
+  payment-service:
+    build:
+      context: ..
+      dockerfile: KazakhExpress/payment-service/Dockerfile
+    container_name: kazakhexpress-payment-service
+    environment:
+      PAYMENT_SERVICE_PORT: "8083"
+      PAYMENT_GRPC_PORT: "9093"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+      REDIS_ADDR: redis:6379
+      MESSAGE_BROKER: nats
+      NATS_URL: nats://nats:4222
+      SMTP_GRPC_ADDR: smtp-service:9094
+      GIN_MODE: release
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+      smtp-service:
+        condition: service_started
+
+  product-service:
+    build:
+      context: ..
+      dockerfile: KazakhExpress/product-service/Dockerfile
+    container_name: kazakhexpress-product-service
+    environment:
+      PRODUCT_SERVICE_PORT: "8084"
+      PRODUCT_GRPC_PORT: "9095"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: products
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_started
+      minio:
+        condition: service_started
+
+  review-service:
+    build:
+      context: ..
+      dockerfile: KazakhExpress/review-service/Dockerfile
+    container_name: kazakhexpress-review-service
+    environment:
+      REVIEW_GRPC_PORT: "9096"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      nats:
         condition: service_started
 
   api-gateway:
@@ -138,20 +217,115 @@ services:
     container_name: kazakhexpress-api-gateway
     environment:
       API_GATEWAY_PORT: "8080"
-      PAYMENT_GRPC_ADDR: payment-service:9093
-      USER_GRPC_ADDR: user-service:9095
+      USER_GRPC_ADDR: user-service:50051
       ORDER_GRPC_ADDR: order-service:9092
+      PAYMENT_GRPC_ADDR: payment-service:9093
+      PRODUCT_GRPC_ADDR: product-service:9095
+      REVIEW_GRPC_ADDR: review-service:9096
+      REDIS_ADDR: redis:6379
+      RATE_LIMIT_REQUESTS: "120"
+      RATE_LIMIT_WINDOW_SECONDS: "60"
       GIN_MODE: release
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     depends_on:
-      payment-service:
-        condition: service_started
       user-service:
         condition: service_started
       order-service:
         condition: service_started
+      payment-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      review-service:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    container_name: kazakhexpress-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+
+  seed-data:
+    image: alpine:3.20
+    container_name: kazakhexpress-seed-data
+    profiles: ["seed"]
+    volumes:
+      - ./infra/seed:/seed:ro
+    command: sh -c "apk add --no-cache curl jq >/dev/null && sh /seed/seed.sh"
+    environment:
+      API_BASE_URL: http://api-gateway:8080
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: kazakhexpress-prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - nats-exporter
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: kazakhexpress-loki
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./infra/loki/loki.yml:/etc/loki/loki.yml:ro
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: kazakhexpress-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./infra/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.114.0
+    container_name: kazakhexpress-otel-collector
+    command: ["--config=/etc/otel-collector/config.yml"]
+    volumes:
+      - ./infra/otel-collector/config.yml:/etc/otel-collector/config.yml:ro
+    depends_on:
+      - tempo
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: kazakhexpress-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_SERVER_SERVE_FROM_SUB_PATH: ${GRAFANA_SERVE_FROM_SUB_PATH:-false}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
 
 volumes:
   postgres-data:
+  minio-data:
   grafana-data:
