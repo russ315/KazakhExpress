@@ -50,7 +50,10 @@ grep -q '^VITE_API_BASE_URL=' .env || echo 'VITE_API_BASE_URL=/api' >> .env
 grep -q '^GRAFANA_ROOT_URL=' .env || echo "GRAFANA_ROOT_URL=https://${DOMAIN}/metrics" >> .env
 grep -q '^GRAFANA_SERVE_FROM_SUB_PATH=' .env || echo 'GRAFANA_SERVE_FROM_SUB_PATH=true' >> .env
 
-COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build
+for service in smtp-service user-service order-service payment-service product-service review-service api-gateway frontend; do
+  docker compose build "$service"
+done
+docker compose up -d
 docker compose --profile seed run --rm seed-data || true
 
 install -d /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot
