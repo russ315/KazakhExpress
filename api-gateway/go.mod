@@ -44,4 +44,4 @@ require (
 
 replace github.com/maqsatto/kazakhexpress-proto => ../../kazakhexpress-proto
 
-replace github.com/russ315/kazakhexpress-protos => ../../kazakhexpress-protos
+replace github.com/russ315/kazakhexpress-protos => ../../kazakhexpress-proto
