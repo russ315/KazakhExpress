@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DOMAIN="${DOMAIN:-kazexp.maqsatto.dev}"
-APP_DIR="${APP_DIR:-/opt/kazakhexpress}"
+APP_DIR="${APP_DIR:-/opt/KazakhExpress}"
 EMAIL="${LETSENCRYPT_EMAIL:-admin@maqsatto.dev}"
 PUBLIC_IP="${PUBLIC_IP:-}"
 
