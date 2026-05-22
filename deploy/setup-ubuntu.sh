@@ -47,8 +47,10 @@ if [[ ! -f .env ]]; then
 fi
 
 grep -q '^VITE_API_BASE_URL=' .env || echo 'VITE_API_BASE_URL=/api' >> .env
+grep -q '^GRAFANA_ROOT_URL=' .env || echo "GRAFANA_ROOT_URL=https://${DOMAIN}/metrics" >> .env
+grep -q '^GRAFANA_SERVE_FROM_SUB_PATH=' .env || echo 'GRAFANA_SERVE_FROM_SUB_PATH=true' >> .env
 
-docker compose up -d --build
+COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build
 docker compose --profile seed run --rm seed-data || true
 
 install -d /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot
@@ -63,6 +65,19 @@ server {
 
   location /api/ {
     proxy_pass http://127.0.0.1:8080/;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+
+  location = /metrics {
+    return 301 /metrics/;
+  }
+
+  location /metrics/ {
+    proxy_pass http://127.0.0.1:3000/metrics/;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
