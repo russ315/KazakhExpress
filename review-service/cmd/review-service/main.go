@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -15,13 +16,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	reviewv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/review/v1"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"google.golang.org/grpc"
 )
 
 func main() {
 	ctx := context.Background()
 	grpcPort := getEnv("REVIEW_GRPC_PORT", "9096")
+	metricsPort := getEnv("REVIEW_METRICS_PORT", "9106")
 
 	db, err := pgxpool.New(ctx, getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/kazakhexpress?sslmode=disable"))
 	if err != nil {
@@ -45,8 +49,24 @@ func main() {
 	}
 
 	service := review.NewService(review.NewPostgresRepository(db), cache.NewRedisRatingCache(redisClient, time.Hour), publisher)
-	server := grpc.NewServer()
+
+	grpcprom.DefaultServerMetrics.EnableHandlingTimeHistogram()
+
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcprom.DefaultServerMetrics.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(grpcprom.DefaultServerMetrics.StreamServerInterceptor()),
+	)
 	reviewv1.RegisterReviewServiceServer(server, grpcapi.NewServer(service))
+	grpcprom.DefaultServerMetrics.InitializeMetrics(server)
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		log.Printf("review metrics started on :%s", metricsPort)
+		if err := http.ListenAndServe(":"+metricsPort, mux); err != nil {
+			log.Printf("review metrics stopped: %v", err)
+		}
+	}()
 	listener, err := net.Listen("tcp", ":"+grpcPort)
 	if err != nil {
 		log.Fatal(err)

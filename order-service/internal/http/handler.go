@@ -4,13 +4,51 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"kazakhexpress/order-service/internal/order"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Handler struct {
 	service *order.Service
+}
+
+var (
+	metricsOnce sync.Once
+
+	httpRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kazakhexpress_http_requests_total",
+			Help: "Total number of HTTP requests by service, route, status and method.",
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kazakhexpress_http_request_duration_seconds",
+			Help:    "HTTP request latency by service, route, status and method.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service", "method", "route", "status"},
+	)
+	httpInflight = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kazakhexpress_http_in_flight_requests",
+			Help: "Current in-flight HTTP requests by service.",
+		},
+		[]string{"service"},
+	)
+)
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		prometheus.MustRegister(httpRequests, httpDuration, httpInflight)
+	})
 }
 
 func NewHandler(service *order.Service) *Handler {
@@ -18,11 +56,12 @@ func NewHandler(service *order.Service) *Handler {
 }
 
 func (h *Handler) Routes() http.Handler {
+	initMetrics()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", h.health)
-	mux.HandleFunc("/metrics", h.metrics)
-	mux.HandleFunc("/orders", h.orders)
-	mux.HandleFunc("/orders/", h.orderByID)
+	mux.Handle("/health", instrument("order-service", "/health", http.HandlerFunc(h.health)))
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/orders", instrument("order-service", "/orders", http.HandlerFunc(h.orders)))
+	mux.Handle("/orders/", instrument("order-service", "/orders/{id}", http.HandlerFunc(h.orderByID)))
 	return mux
 }
 
@@ -30,9 +69,31 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "order"})
 }
 
-func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = w.Write([]byte("kazakhexpress_service_up{service=\"order\"} 1\n"))
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func instrument(service, route string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		httpInflight.WithLabelValues(service).Inc()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		status := strconv.Itoa(rec.status)
+		httpRequests.WithLabelValues(service, r.Method, route, status).Inc()
+		httpDuration.WithLabelValues(service, r.Method, route, status).Observe(time.Since(start).Seconds())
+		httpInflight.WithLabelValues(service).Dec()
+	})
 }
 
 func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {

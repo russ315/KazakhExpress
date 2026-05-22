@@ -14,6 +14,7 @@ import (
 	"kazakhexpress/order-service/internal/messaging"
 	"kazakhexpress/order-service/internal/order"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/jackc/pgx/v5/pgxpool"
 	orderv1 "github.com/maqsatto/kazakhexpress-proto/gen/go/kazakhexpress/order/v1"
 	"github.com/nats-io/nats.go"
@@ -53,8 +54,14 @@ func main() {
 		}
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcprom.DefaultServerMetrics.EnableHandlingTimeHistogram()
+
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcprom.DefaultServerMetrics.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(grpcprom.DefaultServerMetrics.StreamServerInterceptor()),
+	)
 	orderv1.RegisterOrderServiceServer(grpcServer, grpcapi.NewServer(service))
+	grpcprom.DefaultServerMetrics.InitializeMetrics(grpcServer)
 	listener, err := net.Listen("tcp", ":"+grpcPort)
 	if err != nil {
 		log.Fatal(err)
