@@ -9,6 +9,7 @@ import (
 	"kazakhexpress/api-gateway/internal/gateway"
 	"kazakhexpress/api-gateway/internal/orderservice"
 	"kazakhexpress/api-gateway/internal/paymentservice"
+	"kazakhexpress/api-gateway/internal/userservice"
 )
 
 func Run() error {
@@ -21,6 +22,13 @@ func Run() error {
 	}
 	defer paymentClient.Close()
 	paymentservice.RegisterRoutes(router, paymentClient)
+
+	userClient, err := userservice.NewGRPCClient(getEnv("USER_GRPC_ADDR", "localhost:50051"))
+	if err != nil {
+		return err
+	}
+	defer userClient.Close()
+	userservice.RegisterRoutes(router, userClient)
 
 	orderClient, err := orderservice.NewGRPCClient(getEnv("ORDER_GRPC_ADDR", "localhost:9092"))
 	if err != nil {
