@@ -42,9 +42,36 @@ jobs:
         working-directory: KazakhExpress/${{ matrix.service }}
         run: go vet ./...
 
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: KazakhExpress
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: KazakhExpress/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: KazakhExpress/frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: KazakhExpress/frontend
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: KazakhExpress/frontend
+        run: npm run build
+
   docker-build:
     runs-on: ubuntu-latest
-    needs: go-test
+    needs:
+      - go-test
+      - frontend-test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +85,7 @@ jobs:
 
       - name: Build service images
         working-directory: KazakhExpress
-        run: docker compose build api-gateway user-service order-service product-service payment-service review-service smtp-service
+        run: docker compose build api-gateway user-service order-service product-service payment-service review-service smtp-service frontend
 
       - name: Validate OpenAPI and dashboards
         working-directory: KazakhExpress

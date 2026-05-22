@@ -21,11 +21,13 @@ func Run(ctx context.Context) error {
 
 	server := grpc.NewServer()
 	smtpv1.RegisterSMTPServiceServer(server, grpcapi.NewServer(smtpservice.NewService(smtpservice.Config{
-		Host:     getEnv("SMTP_HOST", "smtp.gmail.com"),
-		Port:     getEnv("SMTP_PORT", "587"),
-		Username: os.Getenv("SMTP_USERNAME"),
-		Password: os.Getenv("SMTP_PASSWORD"),
-		From:     getEnv("SMTP_FROM", "noreply@kazakhexpress.kz"),
+		Host:         getEnv("SMTP_HOST", "smtp.gmail.com"),
+		Port:         getEnv("SMTP_PORT", "587"),
+		Username:     os.Getenv("SMTP_USERNAME"),
+		Password:     os.Getenv("SMTP_PASSWORD"),
+		From:         getEnv("SMTP_FROM", "noreply@kazakhexpress.kz"),
+		ResendAPIKey: os.Getenv("RESEND_API_KEY"),
+		ResendFrom:   getEnv("RESEND_FROM", "KazakhExpress <noreply@send.maqsatto.dev>"),
 	})))
 
 	go func() {

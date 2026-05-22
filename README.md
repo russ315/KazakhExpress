@@ -12,6 +12,7 @@ order-service    orders, status flow, payment event consumer
 payment-service  idempotent payments, refunds, SMTP receipts
 review-service   product reviews and cached rating
 smtp-service     shared SMTP sender used by other services
+frontend         consumer marketplace UI on :5173
 ```
 
 Shared protobuf contracts live in:
@@ -44,6 +45,7 @@ Main URLs:
 
 ```txt
 API Gateway  http://localhost:8080
+Frontend     http://localhost:5173
 Grafana      http://localhost:3000  admin/admin
 NATS monitor http://localhost:8222
 MinIO        http://localhost:9001  minioadmin/minioadmin
@@ -57,6 +59,12 @@ Business services are internal. Use the gateway, for example:
 curl http://localhost:8080/health
 curl http://localhost:8080/payment/health
 curl http://localhost:8080/products
+```
+
+The frontend is consumer-first: catalog, registration, cart, order, mock payment through the gateway, receipt email, and reviews. Backend/admin checks live under:
+
+```txt
+http://localhost:5173/ops
 ```
 
 Gateway rate limiting is backed by Redis. Defaults:
@@ -98,13 +106,20 @@ The second request returns the same payment through Redis idempotency. If SMTP c
 
 ## SMTP
 
-Set these when real email is needed:
+Email uses the shared `smtp-service`. If no credentials are configured it logs dry-run messages and does not crash. Resend is preferred for the hosted domain; classic SMTP still works as fallback.
+
+```powershell
+$env:RESEND_API_KEY="your-resend-key"
+$env:RESEND_FROM="KazakhExpress <noreply@send.maqsatto.dev>"
+docker compose up --build
+```
+
+Classic SMTP fallback:
 
 ```powershell
 $env:SMTP_USERNAME="your@gmail.com"
 $env:SMTP_PASSWORD="your-app-password"
 $env:SMTP_FROM="noreply@kazakhexpress.kz"
-docker compose up --build
 ```
 
 ## Tests
@@ -118,6 +133,12 @@ foreach ($svc in "api-gateway","user-service","order-service","product-service",
   go vet ./...
   Pop-Location
 }
+
+Push-Location frontend
+npm ci
+npm run lint
+npm run build
+Pop-Location
 ```
 
 Proto repo:
