@@ -49,14 +49,37 @@ func (h *Handler) productByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := parts[0]
-	if len(parts) == 1 && r.Method == http.MethodGet {
-		h.getProduct(w, r, id)
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			h.getProduct(w, r, id)
+		case http.MethodPut, http.MethodPatch:
+			h.updateProduct(w, r, id)
+		case http.MethodDelete:
+			h.deleteProduct(w, r, id)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 		return
 	}
 
 	if len(parts) == 2 && parts[1] == "stock" && r.Method == http.MethodPatch {
 		h.updateStock(w, r, id)
 		return
+	}
+	if len(parts) == 3 && parts[1] == "stock" {
+		switch parts[2] {
+		case "reserve":
+			if r.Method == http.MethodPost {
+				h.reserveStock(w, r, id)
+				return
+			}
+		case "release":
+			if r.Method == http.MethodPost {
+				h.releaseStock(w, r, id)
+				return
+			}
+		}
 	}
 
 	w.WriteHeader(http.StatusMethodNotAllowed)
@@ -68,13 +91,11 @@ func (h *Handler) createProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-
 	created, err := h.service.Create(r.Context(), input)
 	if err != nil {
 		handleServiceError(w, err)
 		return
 	}
-
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -84,7 +105,6 @@ func (h *Handler) listProducts(w http.ResponseWriter, r *http.Request) {
 		handleServiceError(w, err)
 		return
 	}
-
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -94,8 +114,29 @@ func (h *Handler) getProduct(w http.ResponseWriter, r *http.Request, id string) 
 		handleServiceError(w, err)
 		return
 	}
-
 	writeJSON(w, http.StatusOK, found)
+}
+
+func (h *Handler) updateProduct(w http.ResponseWriter, r *http.Request, id string) {
+	var input product.UpdateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	updated, err := h.service.Update(r.Context(), id, input)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) deleteProduct(w http.ResponseWriter, r *http.Request, id string) {
+	if err := h.service.Delete(r.Context(), id); err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) updateStock(w http.ResponseWriter, r *http.Request, id string) {
@@ -104,13 +145,39 @@ func (h *Handler) updateStock(w http.ResponseWriter, r *http.Request, id string)
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-
 	updated, err := h.service.UpdateStock(r.Context(), id, input.Stock)
 	if err != nil {
 		handleServiceError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, updated)
+}
 
+func (h *Handler) reserveStock(w http.ResponseWriter, r *http.Request, id string) {
+	var input product.ReserveStockInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	updated, err := h.service.ReserveStock(r.Context(), id, input)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) releaseStock(w http.ResponseWriter, r *http.Request, id string) {
+	var input product.ReleaseStockInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	updated, err := h.service.ReleaseStock(r.Context(), id, input)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -118,8 +185,10 @@ func handleServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, product.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, product.ErrNotFound):
+	case errors.Is(err, product.ErrNotFound), errors.Is(err, product.ErrReservationNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, product.ErrInsufficientStock):
+		writeError(w, http.StatusConflict, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}

@@ -2,7 +2,10 @@ module kazakhexpress/order-service
 
 go 1.25
 
-require github.com/jackc/pgx/v5 v5.7.6
+require (
+	github.com/jackc/pgx/v5 v5.7.6
+	github.com/rabbitmq/amqp091-go v1.9.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

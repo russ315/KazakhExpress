@@ -10,11 +10,15 @@ import (
 var ErrInvalidInput = errors.New("invalid order input")
 
 type Service struct {
-	repo Repository
+	repo      Repository
+	publisher EventPublisher
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo Repository, publisher EventPublisher) *Service {
+	if publisher == nil {
+		publisher = NoopPublisher{}
+	}
+	return &Service{repo: repo, publisher: publisher}
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Order, error) {
@@ -69,7 +73,24 @@ func (s *Service) UpdateStatus(ctx context.Context, id string, status Status) (O
 	order.Status = status
 	order.UpdatedAt = time.Now().UTC()
 
-	return s.repo.Update(ctx, order)
+	updated, err := s.repo.Update(ctx, order)
+	if err != nil {
+		return Order{}, err
+	}
+
+	if status == StatusCompleted {
+		items := make([]OrderCompletedItem, 0, len(updated.Items))
+		for _, item := range updated.Items {
+			items = append(items, OrderCompletedItem{ProductID: item.ProductID, Quantity: item.Quantity})
+		}
+		_ = s.publisher.PublishOrderCompleted(ctx, OrderCompletedEvent{
+			OrderID:    updated.ID,
+			CustomerID: updated.CustomerID,
+			Items:      items,
+		})
+	}
+
+	return updated, nil
 }
 
 func isAllowedStatus(status Status) bool {

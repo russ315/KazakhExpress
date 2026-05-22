@@ -12,6 +12,9 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./payment-service/migrations/001_create_payments.sql:/docker-entrypoint-initdb.d/001_create_payments.sql:ro
       - ./payment-service/migrations/002_extend_payments.sql:/docker-entrypoint-initdb.d/002_extend_payments.sql:ro
+      - ./review-service/migrations/001_create_reviews.sql:/docker-entrypoint-initdb.d/010_create_reviews.sql:ro
+      - ./review-service/migrations/002_create_review_votes.sql:/docker-entrypoint-initdb.d/011_create_review_votes.sql:ro
+      - ./review-service/migrations/003_create_review_eligibility.sql:/docker-entrypoint-initdb.d/012_create_review_eligibility.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d kazakhexpress"]
       interval: 5s
@@ -87,6 +90,24 @@ services:
       smtp-service:
         condition: service_started
 
+  review-service:
+    build:
+      context: ..
+      dockerfile: KazakhExpress/review-service/Dockerfile
+    container_name: kazakhexpress-review-service
+    environment:
+      REVIEW_GRPC_PORT: "9095"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kazakhexpress?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   api-gateway:
     build:
       context: ..
@@ -95,11 +116,14 @@ services:
     environment:
       API_GATEWAY_PORT: "8080"
       PAYMENT_GRPC_ADDR: payment-service:9093
+      REVIEW_GRPC_ADDR: review-service:9095
       GIN_MODE: release
     ports:
       - "8080:8080"
     depends_on:
       payment-service:
+        condition: service_started
+      review-service:
         condition: service_started
 
 volumes:

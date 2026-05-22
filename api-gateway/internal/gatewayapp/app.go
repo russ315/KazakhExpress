@@ -8,6 +8,7 @@ import (
 
 	"kazakhexpress/api-gateway/internal/gateway"
 	"kazakhexpress/api-gateway/internal/paymentservice"
+	"kazakhexpress/api-gateway/internal/reviewservice"
 )
 
 func Run() error {
@@ -20,6 +21,13 @@ func Run() error {
 	}
 	defer paymentClient.Close()
 	paymentservice.RegisterRoutes(router, paymentClient)
+
+	reviewClient, err := reviewservice.NewGRPCClient(getEnv("REVIEW_GRPC_ADDR", "localhost:9095"))
+	if err != nil {
+		return err
+	}
+	defer reviewClient.Close()
+	reviewservice.RegisterRoutes(router, reviewClient)
 
 	server := &http.Server{
 		Addr:              ":" + port,

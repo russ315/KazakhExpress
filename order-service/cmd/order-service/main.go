@@ -8,6 +8,7 @@ import (
 
 	httpapi "kazakhexpress/order-service/internal/http"
 	"kazakhexpress/order-service/internal/order"
+	"kazakhexpress/order-service/internal/rabbitmq"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,7 +24,13 @@ func main() {
 	defer db.Close()
 
 	repo := order.NewPostgresRepository(db)
-	service := order.NewService(repo)
+	var publisher order.EventPublisher = order.NoopPublisher{}
+	if rmq, err := rabbitmq.NewPublisher(getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")); err != nil {
+		log.Printf("warning: rabbitmq not available: %v", err)
+	} else {
+		publisher = rmq
+	}
+	service := order.NewService(repo, publisher)
 	handler := httpapi.NewHandler(service)
 
 	log.Printf("order service started on :%s", port)
