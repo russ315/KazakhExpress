@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/maqsatto/kazakhexpress-proto v0.0.0-00010101000000-000000000000
+	github.com/russ315/kazakhexpress-protos v0.1.1
 	google.golang.org/grpc v1.81.1
 )
 
@@ -42,3 +43,5 @@ require (
 )
 
 replace github.com/maqsatto/kazakhexpress-proto => ../../kazakhexpress-proto
+
+replace github.com/russ315/kazakhexpress-protos => ../../kazakhexpress-protos

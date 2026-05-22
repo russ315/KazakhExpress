@@ -2,6 +2,7 @@ FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 COPY kazakhexpress-proto ./kazakhexpress-proto
+COPY kazakhexpress-protos ./kazakhexpress-protos
 COPY KazakhExpress/api-gateway ./KazakhExpress/api-gateway
 
 WORKDIR /src/KazakhExpress/api-gateway
