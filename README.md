@@ -124,6 +124,21 @@ git diff --exit-code
 Pop-Location
 ```
 
+End-to-end smoke test through the API Gateway:
+
+```powershell
+docker compose up --build -d
+docker compose --profile seed run --rm seed-data
+powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1
+```
+
+Demo runbook:
+
+```txt
+docs/demo-workflow.md
+docs/backend-status.md
+```
+
 ## Observability
 
 Grafana is provisioned with Prometheus, Loki, Tempo, and ready dashboards:
@@ -131,6 +146,8 @@ Grafana is provisioned with Prometheus, Loki, Tempo, and ready dashboards:
 ```txt
 KazakhExpress Backend Overview
 KazakhExpress Payment Flow
+KazakhExpress Catalog And Reviews
+KazakhExpress Messaging And Infra
 ```
 
 Current services expose `/metrics` where HTTP is enabled, and all service logs are structured enough for local debugging. Tracing pipeline is ready through the OTel Collector and Tempo.

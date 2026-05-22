@@ -47,7 +47,10 @@ create_product() {
     -d "$body" | jq -r '.id')"
 
   image_file="$TMP_DIR/$product_id.jpg"
-  curl -fsSL "https://picsum.photos/seed/$image_seed/900/700" -o "$image_file"
+  if ! curl -fsSL "https://picsum.photos/seed/$image_seed/900/700" -o "$image_file"; then
+    # Tiny fallback image keeps seed deterministic when the public image endpoint is unavailable.
+    printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=' | base64 -d > "$image_file"
+  fi
   curl -fsS -X POST "$API_BASE_URL/products/$product_id/images" \
     -F "image=@$image_file;type=image/jpeg" >/dev/null
 

@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: Payment PostgreSQL 17
+    uid: payment-postgres
     type: postgres
     access: proxy
     url: postgres:5432

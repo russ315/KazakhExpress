@@ -75,3 +75,25 @@ jobs:
       - name: Validate compose config
         working-directory: KazakhExpress
         run: docker compose config --quiet
+
+      - name: Start backend stack
+        working-directory: KazakhExpress
+        run: docker compose up -d --remove-orphans
+
+      - name: Seed demo data
+        working-directory: KazakhExpress
+        run: docker compose --profile seed run --rm seed-data
+
+      - name: Run gateway smoke tests
+        working-directory: KazakhExpress
+        run: bash scripts/smoke.sh
+
+      - name: Show container logs on failure
+        if: failure()
+        working-directory: KazakhExpress
+        run: docker compose logs --tail=200
+
+      - name: Stop backend stack
+        if: always()
+        working-directory: KazakhExpress
+        run: docker compose down -v --remove-orphans
